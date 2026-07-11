@@ -1,0 +1,20 @@
+{
+  "openmc_version": "0.1.0",
+  "scenario": "loss-free symmetric dual-path baseline",
+  "traffic": {
+    "protocol": "UDP",
+    "datagrams": 2000,
+    "payload_bytes": 1000,
+    "rate_packets_per_second": 200,
+    "duration_seconds": 10
+  },
+  "coding": {
+    "block_size": 8,
+    "repair_symbols": 2,
+    "expected_completed_blocks": 250
+  },
+  "acceptance": {
+    "delivered_datagrams": 2000,
+    "decode_failures": 0
+  }
+}

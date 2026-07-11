@@ -1,0 +1,46 @@
+{
+  "version": "0.1",
+  "processing_host": {
+    "iface_a": "string",
+    "iface_b": "string",
+    "peer_a": "IPv4/IPv6 address",
+    "peer_b": "IPv4/IPv6 address",
+    "peer_port": "1..65535",
+    "block_size": "positive integer",
+    "repairs": "0..32",
+    "policy": [
+      "default",
+      "quality-based",
+      "adaptive"
+    ],
+    "metrics_source": [
+      "file",
+      "synthetic",
+      "disabled"
+    ],
+    "metrics_file": "path",
+    "seed": "unsigned integer"
+  },
+  "edge_receiver": {
+    "listen_iface_a": "string",
+    "listen_iface_b": "string",
+    "output_iface": "string",
+    "listen_port": "1..65535",
+    "block_size": "positive integer",
+    "repairs": "0..32",
+    "max_blocks": "positive integer"
+  },
+  "monitoring": {
+    "peer_a": "IPv4/IPv6 address",
+    "peer_b": "IPv4/IPv6 address",
+    "iface_a": "string",
+    "iface_b": "string",
+    "metrics_file": "path",
+    "http_bind": "address",
+    "http_port": "1..65535",
+    "interval": "positive float seconds",
+    "fast_interval": "positive float seconds",
+    "window": "positive integer",
+    "loss_threshold": "0.0..1.0"
+  }
+}

@@ -1,0 +1,10 @@
+--listen-iface-a
+term2gs3
+--listen-iface-b
+term2gs4
+--output-iface
+term2term4
+--listen-port
+5000
+--block-size
+8

@@ -1,0 +1,16 @@
+--ip-a
+10.102.99.1
+--ip-b
+10.102.100.1
+--iface-a
+term1gs1
+--iface-b
+term1gs2
+--metrics-file
+/tmp/its_metrics.txt
+--port
+9100
+--interval
+0.5
+--window
+20
