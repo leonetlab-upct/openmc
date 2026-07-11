@@ -1,0 +1,44 @@
+# Build outputs
+/bin/*
+!/bin/.gitkeep
+/build/
+*.o
+*.a
+*.so
+*.out
+
+# Runtime outputs and validation artifacts
+validation-logs/
+results/
+metrics/
+captures/
+*.log
+*.csv
+*.pcap
+*.pcapng
+*.tmp
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local environment files
+.env
+.env.*
+*.local
+config/*.local
+!config/bleo-deployment.env
+!config/bleo-deployment.env.example
+
+# Editors and operating systems
+.vscode/
+.idea/
+*~
+*.swp
+.DS_Store
+Thumbs.db
+
+# Temporary files
+/tmp/
+temp/
