@@ -21,3 +21,20 @@
 - OpenMC requires an external physical or emulated communication environment.
 - The reference profiles target bLEO.
 - The release uses dedicated executables for the RS and RaptorQ backends.
+
+## [0.1.1] - 2026-08-06
+
+### Added
+
+- Contribution guidelines.
+- Smoke and baseline test suites.
+- GitHub issue and pull-request templates.
+- Documentation explaining the purpose and maintenance plan of `legacy/`.
+
+### Changed
+
+- Improved repository documentation and contributor workflow.
+
+### Notes
+
+- No changes to the OpenMC processing logic or experimental results.
