@@ -36,7 +36,7 @@ scripts/                Build, deployment, audit and validation helpers
 docs/                   Architecture, configuration and validation documentation
 reproducibility/        Reproducible reference experiment
 legacy/                 Immutable copy of the original validated prototype
-tests/                  Reserved for automated tests
+tests/                  Smoke and end-to-end validation tests
 ```
 
 The current release uses dedicated processing-host and receiver executables for the Reed--Solomon and RaptorQ backends. They implement a common experimental workflow while preserving backend-specific processing requirements.
@@ -214,6 +214,22 @@ Complete functional validation:
 ```bash
 sudo ./scripts/validate_phase3.5.sh
 ```
+
+## Tests
+
+Run the portable checks:
+
+```bash
+make check
+```
+
+Run the smoke and baseline tests in a fully configured bLEO environment:
+
+```bash
+sudo ./tests/run_tests.sh
+```
+
+See **tests/README.md** for details.
 
 ## Documentation
 
