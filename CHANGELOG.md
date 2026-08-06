@@ -30,6 +30,9 @@
 - Smoke and baseline test suites.
 - GitHub issue and pull-request templates.
 - Documentation explaining the purpose and maintenance plan of `legacy/`.
+- Documented current operating-system, protocol, path-count, scalability, monitoring, and deployment limitations.
+- Clarified that ICMP-based monitoring and file-based metric exchange provide near-real-time, packet-triggered adaptation.
+- Corrected the configuration schema to identify peer endpoints as IPv4-only in the current release.
 
 ### Changed
 
