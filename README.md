@@ -10,6 +10,20 @@ This repository contains **OpenMC v0.1.0**, the software release described and e
 
 OpenMC implements packet processing, coding, monitoring, scheduling, multipath forwarding, and receiver-side reconstruction. It does **not** implement the underlying communication infrastructure. Experiments must run over an external physical network or a network-emulation environment. The reference deployment supplied here uses [bLEO](https://github.com/leonetlab-upct/bleo).
 
+## Current limitations
+
+OpenMC v0.1.1 currently:
+
+- runs on Linux and requires networking privileges;
+- supports the validated IPv4 UDP data path;
+- represents exactly two communication paths;
+- uses active ICMP probes for path-quality estimation;
+- exchanges RaptorQ control metrics through a local text file;
+- provides near-real-time, packet-triggered rather than hard real-time adaptation;
+- has not been validated for line-rate or carrier-grade operation.
+
+The reference deployment targets Docker and bLEO, but OpenMC can operate over other preconfigured Linux-based physical or emulated environments. See [Architecture and implementation](docs/architecture.md#current-limitations-and-deployment-assumptions) for the complete discussion.
+
 ## Main features
 
 - Transparent Linux `NFQUEUE` packet interception.
