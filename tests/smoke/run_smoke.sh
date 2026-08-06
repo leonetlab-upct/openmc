@@ -1,16 +1,18 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-set -e
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 echo "Checking executables..."
 
-test -f ../../bin/openmc-rq
-test -f ../../bin/openmc-rs
-test -f ../../bin/edge-receiver-rq
-test -f ../../bin/edge-receiver-rs
+test -f "${ROOT_DIR}/bin/openmc-rq"
+test -f "${ROOT_DIR}/bin/openmc-rs"
+test -f "${ROOT_DIR}/bin/edge-receiver-rq"
+test -f "${ROOT_DIR}/bin/edge-receiver-rs"
 
 echo "Checking configuration..."
 
-test -d ../../config
+test -d "${ROOT_DIR}/config"
 
 echo "Smoke tests passed."
