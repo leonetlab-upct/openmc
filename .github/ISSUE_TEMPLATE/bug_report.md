@@ -1,6 +1,9 @@
 ---
 name: Bug report
 about: Report a reproducible problem
+title: ''
+labels: bug
+assignees: ''
 ---
 
 ## Description
@@ -14,5 +17,6 @@ about: Report a reproducible problem
 ## Environment
 
 - OpenMC version:
-- Operating System:
+- Operating system:
 - Compiler:
+- Execution profile:
