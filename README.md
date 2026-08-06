@@ -229,7 +229,7 @@ Run the smoke and baseline tests in a fully configured bLEO environment:
 sudo ./tests/run_tests.sh
 ```
 
-See **tests/README.md** for details.
+See [tests/README.md](tests/README.md) for details.
 
 ## Documentation
 
