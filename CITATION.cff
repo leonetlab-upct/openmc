@@ -2,8 +2,8 @@ cff-version: 1.2.0
 message: "If you use OpenMC in your research, please cite the software and the associated SoftwareX article."
 title: "OpenMC: An Open-Source Software Framework for Packet-Level Multi-Connectivity Experimentation over Real and Emulated Non-Terrestrial Networks"
 type: software
-version: 0.1.0
-date-released: 2026-07-11
+version: 0.1.1
+date-released: 2026-07-31
 license: GPL-3.0-only
 repository-code: "https://github.com/leonetlab-upct/openmc"
 url: "https://github.com/leonetlab-upct/openmc"
