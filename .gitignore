@@ -42,3 +42,6 @@ Thumbs.db
 # Temporary files
 /tmp/
 temp/
+
+# Local experimental topology mapping
+config/bleo-experiment.env
