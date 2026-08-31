@@ -1,6 +1,6 @@
 # Legacy Source Code
 
-The `legacy/` directory contains the original validated implementation from which OpenMC v0.1.0 evolved.
+The `legacy/` directory contains the validated implementation from which OpenMC v0.1.0 evolved.
 
 This directory is intentionally preserved for three reasons:
 
