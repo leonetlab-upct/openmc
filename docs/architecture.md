@@ -26,7 +26,7 @@ The monitoring subsystem measures RTT and packet loss for each available path an
 
 ## Current source organization
 
-The v0.1.0 release follows a modular functional architecture, but retains dedicated executables for the two coding backends:
+The v0.1.1 release follows a modular functional architecture, but retains dedicated executables for the two coding backends:
 
 - `openmc-rq` and `edge-receiver-rq`
 - `openmc-rs` and `edge-receiver-rs`
@@ -39,9 +39,9 @@ OpenMC does not instantiate satellite nodes, routes, links, or constellations. C
 
 ## Current limitations and deployment assumptions
 
-OpenMC v0.1.0 targets Linux because it relies on NFQUEUE, iptables, interface-bound and raw sockets, and Linux kernel networking configuration. Its components require the corresponding networking privileges. The supplied automation targets a Docker-based bLEO deployment, although the executables can operate over other Linux-based physical or emulated infrastructures whose interfaces, addressing, routing, and reachability have been configured externally. OpenMC does not create or manage the underlying communication topology.
+OpenMC v0.1.1 targets Linux because it relies on NFQUEUE, iptables, interface-bound and raw sockets, and Linux kernel networking configuration. Its components require the corresponding networking privileges. The supplied automation targets a Docker-based bLEO deployment, although the executables can operate over other Linux-based physical or emulated infrastructures whose interfaces, addressing, routing, and reachability have been configured externally. OpenMC does not create or manage the underlying communication topology.
 
-The validated data path currently supports IPv4 UDP application traffic, uses IPv4/UDP to transport coded symbols, assumes packets no larger than 1500 bytes, and represents exactly two communication paths. TCP, IPv6, and an arbitrary number of paths are not supported in v0.1.0. The default, quality-based, and adaptive scheduling policies are available for the systematic RaptorQ pipeline, whereas Reed--Solomon currently supports only the default policy.
+The validated data path currently supports IPv4 UDP application traffic, uses IPv4/UDP to transport coded symbols, assumes packets no larger than 1500 bytes, and represents exactly two communication paths. TCP, IPv6, and an arbitrary number of paths are not supported in v0.1.1. The default, quality-based, and adaptive scheduling policies are available for the systematic RaptorQ pipeline, whereas Reed--Solomon currently supports only the default policy.
 
 Scalability is bounded by the present user-space implementation. Packet interception and FEC processing are performed around the NFQUEUE processing loop, and the encoders and decoders use bounded block tables. The supplied validation demonstrates functional correctness for the evaluated workloads but does not establish line-rate operation, carrier-grade performance, or scalability to a large number of paths.
 
