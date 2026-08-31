@@ -60,7 +60,7 @@
 
 /* --- Runtime configuration and validated bLEO-compatible defaults --- */
 
-#define OPENMC_VERSION          "0.1.0"
+#define OPENMC_VERSION          "0.1.1"
 #define DEFAULT_IFACE_A         "term1gs1"
 #define DEFAULT_IFACE_B         "term1gs2"
 #define DEFAULT_PEER_A          "10.102.99.1"
