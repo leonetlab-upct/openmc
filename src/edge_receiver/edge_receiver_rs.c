@@ -40,7 +40,7 @@
 #include <time.h>
 
 /* Runtime configuration with bLEO-compatible defaults. */
-#define OPENMC_VERSION      "0.1.0"
+#define OPENMC_VERSION      "0.1.1"
 #define DEFAULT_OUT_IFACE   "term2term4"
 #define DEFAULT_IN_IFACE_A  "term2gs3"
 #define DEFAULT_IN_IFACE_B  "term2gs4"
@@ -448,7 +448,7 @@ static uint64_t application_payload_bytes(const uint8_t *pkt, int len)
     }
 
     /* The SoftwareX campaign uses UDP. Non-UDP payload is deliberately not
-     * counted as application goodput by this v0.1.0 metric. */
+     * counted as application goodput by this v0.1.1 metric. */
     return 0;
 }
 
