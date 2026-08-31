@@ -36,7 +36,7 @@ The reference deployment targets Docker and bLEO, but OpenMC can operate over ot
 - Per-path symbol forwarding through Linux network interfaces.
 - Receiver-side reconstruction and transparent packet delivery.
 - Reusable command-line and bLEO deployment profiles.
-- Automated validation of legacy, explicit-CLI, and profile-based executions.
+- Automated experimental orchestration, validation, and reproducibility support.
 
 ## Repository layout
 
@@ -50,9 +50,9 @@ src/
 config/                 Runtime and bLEO deployment profiles
 scripts/                Build, deployment, audit and validation helpers
 docs/                   Architecture, configuration and validation documentation
-reproducibility/        Reproducible reference experiment
+reproducibility/        Reproducibility and experimental-analysis workflows
 legacy/                 Immutable copy of the original validated prototype
-tests/                  Smoke and end-to-end validation tests
+tests/                  Portable smoke checks and optional integration validation
 ```
 
 The current release uses dedicated processing-host and receiver executables for the Reed--Solomon and RaptorQ backends. They implement a common experimental workflow while preserving backend-specific processing requirements.
@@ -95,7 +95,7 @@ Container names and installation paths can be changed in `config/bleo-deployment
 
 ## Build
 
-Check the portable components and Python monitor:
+Check the portable components and Python scripts:
 
 ```bash
 make check
@@ -114,6 +114,8 @@ make clean
 make all
 ```
 
+The complete build requires NFQUEUE, libfec, and lcrq. It should therefore be performed in an environment providing these dependencies.
+
 The generated executables are placed in `bin/`.
 
 ## Install in the reference bLEO environment
@@ -121,7 +123,7 @@ The generated executables are placed in `bin/`.
 Start the bLEO topology before deploying OpenMC. Then run from the repository root:
 
 ```bash
-sudo ./scripts/setup_bleo.sh
+sudo bash scripts/setup_bleo.sh
 ```
 
 This command compiles the applications, deploys the OpenMC sources and runtime profiles, compiles the processing-host and Edge Receiver components inside the configured containers, installs the `NFQUEUE` rule, and configures the host send-buffer limit.
@@ -129,10 +131,12 @@ This command compiles the applications, deploys the OpenMC sources and runtime p
 An alternative deployment file can be selected with:
 
 ```bash
-sudo DEPLOY_ENV=config/my-deployment.env ./scripts/setup_bleo.sh
+sudo DEPLOY_ENV=config/my-deployment.env bash scripts/setup_bleo.sh
 ```
 
-## Quick start: reproducible baseline
+## Historical reproducible baseline
+
+The repository retains the validated OpenMC v0.1.0 loss-free dual-path baseline for reproducibility and compatibility testing.
 
 The reference baseline uses:
 
@@ -144,13 +148,13 @@ The reference baseline uses:
 - two bLEO communication paths;
 - the default scheduling policy.
 
-Run the complete baseline validation:
+Run the historical baseline validation with:
 
 ```bash
-sudo ./reproducibility/baseline/run.sh
+sudo bash reproducibility/baseline/run.sh
 ```
 
-Expected results are:
+The original fixed-count expectations are:
 
 ```text
 Generated datagrams     2000
@@ -159,11 +163,15 @@ Completed blocks         250
 Decode failures            0
 ```
 
+These expectations correspond to the historical v0.1.0 baseline. OpenMC v0.1.1 introduces deadline-based traffic generation and additional instrumentation; host scheduling can therefore cause generator shortfall relative to the historical fixed packet target even when all packets actually generated traverse the OpenMC datapath without loss.
+
+The historical baseline is retained as an integration and regression aid and is not the sole release-acceptance criterion for v0.1.1. See [tests/README.md](tests/README.md) and [docs/validation.md](docs/validation.md) for the current validation strategy.
+
 Logs are written to `validation-logs/phase3.5/`, which is excluded from version control.
 
 ## Manual profile-based execution
 
-After `sudo ./scripts/setup_bleo.sh`, open separate terminals and start the components in this order.
+After `sudo bash scripts/setup_bleo.sh`, open separate terminals and start the components in this order.
 
 ### RaptorQ baseline
 
@@ -217,33 +225,37 @@ Reference files are provided under `config/`. See [docs/configuration.md](docs/c
 
 ## Validation
 
-Static checks:
+Run the portable source and syntax checks:
 
 ```bash
-./scripts/audit_phase3.sh
 make check
-make -n bleo-install DEPLOY_ENV=config/bleo-deployment.env
 ```
 
-Complete functional validation:
+Run the default smoke checks:
 
 ```bash
-sudo ./scripts/validate_phase3.5.sh
+bash tests/run_tests.sh
 ```
+
+The complete native build and optional bLEO integration workflow require an environment providing NFQUEUE, libfec, and lcrq.
+
+See [docs/validation.md](docs/validation.md) for the complete validation strategy.
 
 ## Tests
 
-Run the portable checks:
+The default test suite contains lightweight smoke checks that do not require the complete FEC build environment:
 
 ```bash
-make check
+bash tests/run_tests.sh
 ```
 
-Run the smoke and baseline tests in a fully configured bLEO environment:
+An optional historical bLEO integration/regression workflow can be invoked in a fully configured bLEO environment using:
 
 ```bash
-sudo ./tests/run_tests.sh
+bash tests/run_tests.sh --with-bleo
 ```
+
+The bLEO integration workflow is retained as an additional integration and compatibility aid and is not the sole release-acceptance criterion for v0.1.1.
 
 See [tests/README.md](tests/README.md) for details.
 
@@ -253,7 +265,7 @@ See [tests/README.md](tests/README.md) for details.
 - [Configuration reference](docs/configuration.md)
 - [Validation procedure](docs/validation.md)
 - [Release procedure](docs/release.md)
-- [Reproducible baseline](reproducibility/baseline/README.md)
+- [Historical reproducible baseline](reproducibility/baseline/README.md)
 
 The frozen raw and processed experimental data supporting the SoftwareX evaluation are archived on Zenodo: https://doi.org/10.5281/zenodo.22142700
 
