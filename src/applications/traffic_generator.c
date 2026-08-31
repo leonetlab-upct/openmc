@@ -52,12 +52,7 @@
 //
 // Usage:
 //
-//   ./traffic-generator \
-//       -a 192.168.104.1 \
-//       -p 12345 \
-//       -s 1000 \
-//       -r 564 \
-//       -t 10
+//   ./traffic-generator -a 192.168.104.1 -p 12345 -s 1000 -r 564 -t 10
 //
 // Payload must be at least 8 bytes because bytes 0..7 contain:
 //
