@@ -88,7 +88,7 @@ def ping_once(ip, timeout=1.0, count=1):
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            universal_newlines=True,
             timeout=timeout + 1.0
         )
     except Exception as e:
