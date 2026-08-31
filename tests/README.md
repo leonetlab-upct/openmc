@@ -1,73 +1,93 @@
 # OpenMC Test Suite
 
-This directory contains the validation scripts used to verify the correct
-operation of OpenMC.
+This directory contains lightweight checks and integration-validation
+entry points for OpenMC.
 
-Current tests include:
+## Test structure
 
-- smoke
-- baseline
+The test suite is divided into two levels:
 
-## Smoke test
+- **Smoke checks** verify the presence of the principal source,
+  configuration, and execution files and the expected OpenMC release
+  version. These checks do not require the complete FEC build
+  environment.
 
-The smoke test verifies that the complete OpenMC executables required by the
-experimental workflow are available in `bin/` and that the configuration
-directory is present.
+- **bLEO integration baseline** invokes the existing Phase 3.5
+  integration-validation workflow. It requires an operational bLEO
+  deployment and the complete OpenMC runtime dependencies.
 
-The complete OpenMC binaries must first be built in an environment providing
-NFQUEUE, libfec, and lcrq:
+## Smoke checks
+
+Run the default test suite from the repository root:
 
 ```bash
-make all
+./tests/run_tests.sh
 ```
 
-## Baseline test
+The smoke checks can be executed on a host that does not provide all
+libraries required by the complete OpenMC build.
 
-The baseline test invokes `scripts/validate_phase3.5.sh` and reproduces the
-reference validation workflow used for the accompanying SoftwareX work.
-
-The validation covers three execution modes for both systematic RaptorQ (RQ)
-and Reed-Solomon (RS):
-
-- legacy;
-- explicit-argument;
-- profile-based.
-
-For each validated execution, the expected results are:
-
-- 2000 sent datagrams;
-- 2000 delivered datagrams;
-- 250 completed coding blocks;
-- 0 decoding failures.
-
-The validation fails with a non-zero exit status if any of these conditions
-is not satisfied.
-
-## Prerequisites
-
-The complete test suite requires:
-
-- an operational bLEO deployment;
-- the configured Docker containers;
-- NFQUEUE, libfec, and lcrq dependencies;
-- the complete OpenMC executables;
-- administrative privileges for Docker, iptables, and sysctl.
-
-The portable components and Python scripts can be checked independently on a
-host without the complete FEC dependencies using:
+For portable compilation and Python syntax validation, also run:
 
 ```bash
 make check
 ```
 
-## Running the tests
-
-From the repository root, after building and deploying the required OpenMC
-components:
+The complete OpenMC build requires NFQUEUE, libfec, and lcrq:
 
 ```bash
-sudo ./tests/run_tests.sh
+make all
 ```
 
-The test suite first executes the smoke test and then the baseline validation.
-A non-zero exit status indicates that at least one required check failed.
+and must therefore be performed in an environment providing these
+dependencies.
+
+## bLEO integration baseline
+
+An optional integration baseline is available for a configured bLEO
+environment:
+
+```bash
+./tests/run_tests.sh --with-bleo
+```
+
+or directly:
+
+```bash
+sudo bash tests/baseline/run_baseline.sh
+```
+
+This validation requires:
+
+- an operational bLEO deployment;
+- the configured Docker containers;
+- NFQUEUE, libfec, and lcrq in the corresponding container environment;
+- administrative privileges for Docker, iptables, and sysctl.
+
+The integration baseline invokes `scripts/validate_phase3.5.sh`, which
+is retained as a historical regression and compatibility workflow.
+
+The Phase 3.5 workflow was originally defined for the v0.1.0 functional
+baseline. OpenMC v0.1.1 introduces deadline-based traffic generation and
+additional instrumentation used by the reproducibility experiments.
+Consequently, generator shortfall under the strict generation window can
+cause the historical fixed-count acceptance criteria to report a failure
+even when all packets actually generated are delivered without loss.
+
+For this reason, the Phase 3.5 integration baseline is provided as an
+integration and regression aid and is not used as the sole release
+acceptance criterion for v0.1.1.
+
+## Release validation
+
+OpenMC v0.1.1 is validated using complementary checks:
+
+1. `make check` for portable C compilation and Python syntax;
+2. the smoke checks in this directory;
+3. complete compilation in the Ubuntu/bLEO environment providing
+   NFQUEUE, libfec, and lcrq;
+4. the reproducibility and publication-validation workflows documented
+   under `reproducibility/`.
+
+The complete experimental data and publication-level reproducibility
+results are archived separately in the accompanying Zenodo dataset.
