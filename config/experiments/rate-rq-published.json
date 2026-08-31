@@ -1,0 +1,20 @@
+{
+  "description": "Configuration summary of the final published RQ sustainable offered-rate dataset",
+  "campaign": "rate",
+  "backend": "rq",
+  "policy": "default",
+  "rates_pps": [400, 440],
+  "replicates_per_rate": 5,
+  "path_a_delay_ms": 1,
+  "path_b_delay_ms": 1,
+  "block_size": 8,
+  "repairs": 2,
+  "packet_size_bytes": 1000,
+  "duration_s": 10,
+  "instrumentation_mode": "functional",
+  "traffic_window_tolerance_s": 0.25,
+  "rate_achievement_threshold": 0.95,
+  "sustainability_requirement": "5/5 repetitions PASS",
+  "dataset": "raw/rate-sweep/rq",
+  "note": "This file documents the frozen publication dataset. Individual manifest.json files are the authoritative record of each executed run."
+}
