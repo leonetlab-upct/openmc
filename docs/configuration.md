@@ -39,7 +39,7 @@ Legacy form:
 --nfqueue-num N
 ```
 
-Only the default scheduling policy is supported by the RS backend in v0.1.0.
+Only the default scheduling policy is supported by the RS backend in v0.1.1.
 
 ## Edge Receivers
 
