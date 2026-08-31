@@ -29,6 +29,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <inttypes.h>
+#include <limits.h>
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
@@ -62,6 +64,16 @@
 #define MAX_PARITY     32
 #define DEFAULT_PARITY 2
 
+/*
+ * Experiment-6b: NFQUEUE hardening for offered-rate sweeps.
+ *
+ * The larger queue and Netlink receive buffer reduce the probability that
+ * short user-space processing stalls are converted into ENOBUFS failures.
+ * The effective SO_RCVBUF is logged at startup for reproducibility.
+ */
+#define NFQUEUE_MAXLEN         65535
+#define NFQUEUE_RCVBUF_BYTES   (4 * 1024 * 1024)
+
 struct openmc_rs_config {
     char iface_a[IFNAMSIZ];
     char iface_b[IFNAMSIZ];
@@ -71,6 +83,8 @@ struct openmc_rs_config {
     uint16_t block_size;
     uint16_t repairs;
     uint16_t nfqueue_num;
+    char run_id[128];
+    char summary_output[PATH_MAX];
 };
 
 static struct openmc_rs_config runtime_cfg = {
@@ -81,7 +95,9 @@ static struct openmc_rs_config runtime_cfg = {
     .peer_port = DEFAULT_PEER_PORT,
     .block_size = K_DATA,
     .repairs = DEFAULT_PARITY,
-    .nfqueue_num = DEFAULT_NFQUEUE_NUM
+    .nfqueue_num = DEFAULT_NFQUEUE_NUM,
+    .run_id = "",
+    .summary_output = ""
 };
 
 
@@ -122,6 +138,8 @@ static void usage(FILE *stream, const char *prog)
         "  --repairs R           Repair symbols (0..%d; default: %d)\\n"
         "  --policy default      RS supports only the default policy in v0.1.0\\n"
         "  --nfqueue-num N       NFQUEUE number (default: %u)\\n"
+        "  --run-id ID            Experimental run identifier\\n"
+        "  --summary-output PATH  Write structured run summary CSV\\n"
         "  -h, --help            Show this help\\n"
         "  -V, --version         Show version\\n",
         prog, DEFAULT_IFACE_A, DEFAULT_IFACE_B, DEFAULT_PEER_A,
@@ -134,7 +152,7 @@ static int parse_runtime_options(int argc, char **argv)
     enum {
         OPT_IFACE_A = 1000, OPT_IFACE_B, OPT_PEER_A, OPT_PEER_B,
         OPT_PEER_PORT, OPT_BLOCK_SIZE, OPT_REPAIRS, OPT_POLICY,
-        OPT_NFQUEUE_NUM
+        OPT_NFQUEUE_NUM, OPT_RUN_ID, OPT_SUMMARY_OUTPUT
     };
     static const struct option opts[] = {
         {"iface-a", required_argument, NULL, OPT_IFACE_A},
@@ -146,6 +164,8 @@ static int parse_runtime_options(int argc, char **argv)
         {"repairs", required_argument, NULL, OPT_REPAIRS},
         {"policy", required_argument, NULL, OPT_POLICY},
         {"nfqueue-num", required_argument, NULL, OPT_NFQUEUE_NUM},
+        {"run-id", required_argument, NULL, OPT_RUN_ID},
+        {"summary-output", required_argument, NULL, OPT_SUMMARY_OUTPUT},
         {"help", no_argument, NULL, 'h'},
         {"version", no_argument, NULL, 'V'},
         {NULL, 0, NULL, 0}
@@ -206,6 +226,15 @@ static int parse_runtime_options(int argc, char **argv)
             if (parse_u16(optarg, 0, 65535, &number) != 0) return -1;
             runtime_cfg.nfqueue_num = number;
             break;
+        case OPT_RUN_ID:
+            if (set_string(runtime_cfg.run_id, sizeof(runtime_cfg.run_id),
+                           optarg, "--run-id") != 0) return -1;
+            break;
+        case OPT_SUMMARY_OUTPUT:
+            if (set_string(runtime_cfg.summary_output,
+                           sizeof(runtime_cfg.summary_output),
+                           optarg, "--summary-output") != 0) return -1;
+            break;
         case 'h':
             usage(stdout, argv[0]);
             exit(EXIT_SUCCESS);
@@ -223,18 +252,27 @@ static int parse_runtime_options(int argc, char **argv)
         return -1;
     }
 
+    if ((runtime_cfg.summary_output[0]) && !runtime_cfg.run_id[0]) {
+        fprintf(stderr,
+                "[OpenMC] --run-id is required when structured output is enabled\n");
+        return -1;
+    }
+
     struct in_addr address;
     if (inet_pton(AF_INET, runtime_cfg.peer_a, &address) != 1 ||
         inet_pton(AF_INET, runtime_cfg.peer_b, &address) != 1) {
-        fprintf(stderr, "[OpenMC RS] Peer addresses must be valid IPv4 addresses\\n");
+        fprintf(stderr,
+                "[OpenMC RS] Peer addresses must be valid IPv4 addresses\\n");
         return -1;
     }
+
     if (if_nametoindex(runtime_cfg.iface_a) == 0 ||
         if_nametoindex(runtime_cfg.iface_b) == 0) {
         fprintf(stderr, "[OpenMC RS] Interfaces not found: %s, %s\\n",
                 runtime_cfg.iface_a, runtime_cfg.iface_b);
         return -1;
     }
+
     return 0;
 }
 
@@ -278,9 +316,9 @@ struct fec_fragment_hdr {
 
 /* State for the current generation in the gateway */
 struct generation_state {
-    uint16_t gen_id;                       // generation id
-    int      count;                        // how many data packets stored (0..K_DATA)
-    int      original_len;                 // expected IP length (all must match)
+    uint16_t gen_id;                        // generation id
+    int      count;                         // how many data packets stored (0..K_DATA)
+    int      original_len;                  // expected IP length (all must match)
     uint8_t  data[K_DATA * MAX_PKT_LEN];    // stored packets (for parity)
 };
 
@@ -401,7 +439,7 @@ static void init_rs_codec(int r)
     int fcr     = 1;
     int prim    = 1;
     int nroots  = r;
-    int pad     = 255 - (K_DATA + r);  // shortening so data length = K_DATA
+    int pad     = 255 - (K_DATA + r);
 
     rs = init_rs_char(symsize, gfpoly, fcr, prim, nroots, pad);
     if (!rs) {
@@ -431,7 +469,7 @@ static void send_fragment(uint16_t gen_id, uint8_t index, uint8_t type,
     struct fec_fragment_hdr hdr;
     hdr.gen_id       = htons(gen_id);
     hdr.index        = index;
-    hdr.type         = type;   // 0=data, 1=parity
+    hdr.type         = type;
     hdr.original_len = htons(len);
     hdr.reserved     = 0;
 
@@ -444,7 +482,6 @@ static void send_fragment(uint16_t gen_id, uint8_t index, uint8_t type,
     const char *ip_str = runtime_cfg.peer_a;
 
     if (type == 0) {
-        /* Data: index 0..7 */
         if (index & 1) {
             use_sock   = sock_b;
             dest       = &gs_addr_b;
@@ -452,8 +489,7 @@ static void send_fragment(uint16_t gen_id, uint8_t index, uint8_t type,
             ip_str     = runtime_cfg.peer_b;
         }
     } else {
-        /* Parity: index K_DATA..K_DATA+r-1 */
-        int p = index - K_DATA; // 0..r-1
+        int p = index - K_DATA;
         if (p & 1) {
             use_sock   = sock_b;
             dest       = &gs_addr_b;
@@ -464,9 +500,10 @@ static void send_fragment(uint16_t gen_id, uint8_t index, uint8_t type,
 
     ssize_t sent = sendto(use_sock, buf, sizeof(hdr) + len, 0,
                           (struct sockaddr *)dest, sizeof(*dest));
+
     if (sent < 0) {
         perror("sendto(udp_sock)");
-    }else {
+    } else {
         stats.pkts_forwarded++;
         stats.bytes_forwarded += (sizeof(struct fec_fragment_hdr) + len);
 
@@ -479,6 +516,9 @@ static void send_fragment(uint16_t gen_id, uint8_t index, uint8_t type,
                 "[GW] gen=%u idx=%u type=%u len=%u -> via %s to %s\n",
                 gen_id, index, type, len, iface_name, ip_str);*/
     }
+
+    (void)iface_name;
+    (void)ip_str;
 }
 
 /* Flush the current generation:
@@ -506,7 +546,9 @@ static void flush_generation(const struct generation_state *g)
     int k   = g->count;
     int T   = g->original_len;
 
-    if (k == K_DATA && parity_symbols > 0 && rs != NULL) {
+    (void)k;
+
+    if (g->count == K_DATA && parity_symbols > 0 && rs != NULL) {
         uint64_t t0 = now_ns();
 
         uint8_t parity[MAX_PARITY][MAX_PKT_LEN];
@@ -514,7 +556,6 @@ static void flush_generation(const struct generation_state *g)
         uint8_t parity_vec[MAX_PARITY];
 
         for (int j = 0; j < T; j++) {
-            /* coger columna j de los K paquetes */
             for (int i = 0; i < K_DATA; i++) {
                 data_vec[i] = g->data[i * T + j];
             }
@@ -537,17 +578,7 @@ static void flush_generation(const struct generation_state *g)
     }
 }
 
-
-/* Handle one outgoing IPv4 packet captured by NFQUEUE.
- *
- * - We assume it is a full IPv4 datagram.
- * - We immediately send it as a "data fragment" (type=0) with an index
- *   in [0..K_DATA-1], balancing across both interfaces.
- * - We also store it inside the current generation buffer for later
- *   parity computation.
- * - When the generation reaches K_DATA packets, we compute and send
- *   the parity fragments and reset the generation.
- */
+/* Handle one outgoing IPv4 packet captured by NFQUEUE. */
 static void handle_ip_packet(const uint8_t *pkt, int len, uint64_t t_nfq)
 {
     if (len <= 0 || len > MAX_PKT_LEN) {
@@ -555,21 +586,18 @@ static void handle_ip_packet(const uint8_t *pkt, int len, uint64_t t_nfq)
         return;
     }
 
-    /* Si no hay generación activa, iniciamos una nueva */
     if (cur_gen.count == 0) {
         cur_gen.gen_id++;
         cur_gen.original_len = len;
         fprintf(stderr, "[GW] Starting generation %u (len=%d)\n",
                 cur_gen.gen_id, len);
     } else {
-        /* Mantenemos misma longitud dentro de una generación */
         if (len != cur_gen.original_len) {
             fprintf(stderr,
                     "[GW] Packet length changed within generation "
                     "(old=%d, new=%d). Flushing current generation.\n",
                     cur_gen.original_len, len);
 
-            /* no enviamos paridades aquí: marcamos (si procede) y reseteamos */
             if (!pending_rs && cur_gen.count == K_DATA)
                 mark_generation_ready(&cur_gen);
 
@@ -577,11 +605,12 @@ static void handle_ip_packet(const uint8_t *pkt, int len, uint64_t t_nfq)
             cur_gen.original_len = len;
             cur_gen.count = 0;
 
-            fprintf(stderr, "[GW] Starting new generation %u (len=%d)\n", cur_gen.gen_id, len);
+            fprintf(stderr,
+                    "[GW] Starting new generation %u (len=%d)\n",
+                    cur_gen.gen_id, len);
         }
     }
 
-    /* Si por algún motivo count ya está en K_DATA, forzamos flush y nueva gen */
     if (cur_gen.count >= K_DATA) {
         fprintf(stderr, "[GW] Generation %u overflow, forcing flush\n",
                 cur_gen.gen_id);
@@ -593,32 +622,30 @@ static void handle_ip_packet(const uint8_t *pkt, int len, uint64_t t_nfq)
         cur_gen.original_len = len;
         cur_gen.count = 0;
 
-        fprintf(stderr, "[GW] Starting new generation %u (len=%d)\n", cur_gen.gen_id, len);
+        fprintf(stderr,
+                "[GW] Starting new generation %u (len=%d)\n",
+                cur_gen.gen_id, len);
     }
 
-    /* Índice dentro de la generación para este paquete */
     int index = cur_gen.count;
     if (index >= K_DATA) {
-        /* Defensa extra, no debería ocurrir con la lógica anterior */
-        fprintf(stderr, "[GW] Internal error: index=%d>=K_DATA, dropping packet\n", index);
+        fprintf(stderr,
+                "[GW] Internal error: index=%d>=K_DATA, dropping packet\n",
+                index);
         return;
     }
 
-    /* Guardamos el paquete para construir paridades más adelante */
-    int T = cur_gen.original_len;          // == len dentro de la generación
+    int T = cur_gen.original_len;
     uint8_t *dst = &cur_gen.data[index * T];
     memcpy(dst, pkt, T);
     cur_gen.count++;
 
-    /* Enviamos el paquete inmediatamente como "data fragment" (type=0) */
     uint64_t t_send = now_ns();
     send_fragment(cur_gen.gen_id, (uint8_t)index, 0, (uint16_t)len, pkt);
     stats.nfq_pkts++;
     stats.nfq_latency_ns += (t_send - t_nfq);
 
-    /* Si hemos completado la generación, calculamos y enviamos paridades */
     if (cur_gen.count == K_DATA) {
-        //flush_generation();
         mark_generation_ready(&cur_gen);
         cur_gen.count = 0;
         cur_gen.original_len = 0;
@@ -635,9 +662,9 @@ static int nfq_cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
     uint64_t t_nfq = now_ns();
 
     if (t_start_ns == 0)
-        t_start_ns = t_nfq;   // primer paquete real
+        t_start_ns = t_nfq;
 
-    t_end_ns = t_nfq;         // ← 🔥 ACTUALIZAR SIEMPRE
+    t_end_ns = t_nfq;
 
     stats.pkts_intercepted++;
 
@@ -650,15 +677,94 @@ static int nfq_cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
 
     unsigned char *payload = NULL;
     int len = nfq_get_payload(nfa, &payload);
+
     if (len >= 0 && payload != NULL) {
-        /* Process the captured IPv4 packet and replace it by FEC fragments */
         handle_ip_packet(payload, len, t_nfq);
     } else {
         fprintf(stderr, "[GW] nfq_get_payload() returned %d\n", len);
     }
 
-    /* Drop original packet; we re-inject coded fragments via UDP */
     return nfq_set_verdict(qh, id, NF_DROP, 0, NULL);
+}
+
+static int flush_sync_close(FILE **fp_ptr, const char *label)
+{
+    if (!fp_ptr || !*fp_ptr) return 0;
+
+    FILE *fp = *fp_ptr;
+    int rc = 0;
+
+    if (fflush(fp) != 0) {
+        fprintf(stderr, "%s: fflush failed: %s\n",
+                label, strerror(errno));
+        rc = -1;
+    }
+
+    int fd = fileno(fp);
+    if (fd >= 0 && fsync(fd) != 0) {
+        fprintf(stderr, "%s: fsync failed: %s\n",
+                label, strerror(errno));
+        rc = -1;
+    }
+
+    if (fclose(fp) != 0) {
+        fprintf(stderr, "%s: fclose failed: %s\n",
+                label, strerror(errno));
+        rc = -1;
+    }
+
+    *fp_ptr = NULL;
+    return rc;
+}
+
+static int write_summary_csv(double duration_s, double thr_fwd_pps,
+                             double thr_orig_pps, double thr_fwd_mbps,
+                             double thr_orig_mbps)
+{
+    if (!runtime_cfg.summary_output[0]) return 0;
+
+    FILE *fp = fopen(runtime_cfg.summary_output, "w");
+    if (!fp) {
+        perror("[GW] fopen(summary-output)");
+        return -1;
+    }
+
+    fprintf(fp,
+            "run_id,component,backend,policy,duration_s,packets_intercepted,"
+            "symbols_forwarded,originals_forwarded,bytes_forwarded,bytes_original,"
+            "blocks_completed,throughput_pps,original_throughput_pps,throughput_mbps,"
+            "original_throughput_mbps,encoding_calls,encoding_mean_us,"
+            "nfqueue_samples,nfqueue_mean_us\n");
+
+    fprintf(fp,
+            "%s,gateway,Reed-Solomon,default,%.9f,%" PRIu64 ",%" PRIu64 ",%" PRIu64
+            ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%.9f,%.9f,%.9f,%.9f,"
+            "%" PRIu64 ",%.9f,%" PRIu64 ",%.9f\n",
+            runtime_cfg.run_id,
+            duration_s,
+            stats.pkts_intercepted,
+            stats.pkts_forwarded,
+            stats.pkts_original,
+            stats.bytes_forwarded,
+            stats.bytes_original,
+            stats.generations_completed,
+            thr_fwd_pps,
+            thr_orig_pps,
+            thr_fwd_mbps,
+            thr_orig_mbps,
+            stats.enc_calls,
+            stats.enc_calls
+                ? (stats.enc_time_ns / (double)stats.enc_calls) / 1000.0
+                : 0.0,
+            stats.nfq_pkts,
+            stats.nfq_pkts
+                ? (stats.nfq_latency_ns / (double)stats.nfq_pkts) / 1000.0
+                : 0.0);
+
+    if (flush_sync_close(&fp, "[GW] summary-output") != 0)
+        return -1;
+
+    return 0;
 }
 
 static void sigint_handler(int sig)
@@ -687,7 +793,8 @@ int main(int argc, char *argv[])
             runtime_cfg.nfqueue_num);
 
     if (parity_symbols == 0) {
-        fprintf(stderr, "[GW] FEC disabled (r=0), will send only original packets\n");
+        fprintf(stderr,
+                "[GW] FEC disabled (r=0), will send only original packets\n");
     } else {
         init_rs_codec(parity_symbols);
     }
@@ -720,7 +827,9 @@ int main(int argc, char *argv[])
 
     qh = nfq_create_queue(h, runtime_cfg.nfqueue_num, &nfq_cb, NULL);
     if (!qh) {
-        fprintf(stderr, "Error nfq_create_queue(1)\n");
+        fprintf(stderr,
+                "Error nfq_create_queue(%u)\n",
+                runtime_cfg.nfqueue_num);
         nfq_close(h);
         return EXIT_FAILURE;
     }
@@ -732,7 +841,54 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
+    /*
+     * Experiment-6b NFQUEUE hardening.
+     *
+     * Increase the maximum number of packets that the kernel may retain in
+     * this queue.  Failure is reported but is not fatal so that deployments
+     * with more restrictive kernel settings remain diagnosable.
+     */
+    if (nfq_set_queue_maxlen(qh, NFQUEUE_MAXLEN) < 0) {
+        fprintf(stderr,
+                "[GW] Warning: nfq_set_queue_maxlen(%u) failed\n",
+                (unsigned)NFQUEUE_MAXLEN);
+    }
+
     fd = nfq_fd(h);
+
+    /*
+     * Increase the receive buffer of the Netlink socket used by NFQUEUE.
+     * The effective value is queried and logged because Linux may clamp or
+     * internally adjust the requested SO_RCVBUF value.
+     */
+    {
+        int requested_rcvbuf = NFQUEUE_RCVBUF_BYTES;
+        int effective_rcvbuf = 0;
+        socklen_t optlen = sizeof(effective_rcvbuf);
+
+        if (setsockopt(fd,
+                       SOL_SOCKET,
+                       SO_RCVBUF,
+                       &requested_rcvbuf,
+                       sizeof(requested_rcvbuf)) < 0) {
+            perror("[GW] setsockopt(SO_RCVBUF)");
+        }
+
+        if (getsockopt(fd,
+                       SOL_SOCKET,
+                       SO_RCVBUF,
+                       &effective_rcvbuf,
+                       &optlen) < 0) {
+            perror("[GW] getsockopt(SO_RCVBUF)");
+        } else {
+            fprintf(stderr,
+                    "[GW] NFQUEUE queue_maxlen=%u "
+                    "SO_RCVBUF requested=%d effective=%d bytes\n",
+                    (unsigned)NFQUEUE_MAXLEN,
+                    requested_rcvbuf,
+                    effective_rcvbuf);
+        }
+    }
 
     struct sigaction sa = {0};
     sa.sa_handler = sigint_handler;
@@ -741,28 +897,72 @@ int main(int argc, char *argv[])
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
 
-    fprintf(stderr, "[GW] Listening on NFQUEUE 1...\n");
+    fprintf(stderr,
+            "[GW] Listening on NFQUEUE %u...\n",
+            runtime_cfg.nfqueue_num);
 
-    //t_start_ns = now_ns();
+    rv = 0;
 
-    while (!stop_flag && (rv = recv(fd, buf, sizeof(buf), 0)) >= 0) {
+    while (!stop_flag) {
+        rv = recv(fd, buf, sizeof(buf), 0);
+
+        if (rv < 0) {
+            if (errno == EINTR) {
+                if (stop_flag)
+                    break;
+                continue;
+            }
+
+            if (errno == ENOBUFS) {
+                fprintf(stderr,
+                        "[GW] NFQUEUE receive failure: ENOBUFS "
+                        "(kernel/user-space queue overflow)\n");
+            } else {
+                perror("[GW] recv");
+            }
+
+            break;
+        }
+
         nfq_handle_packet(h, buf, rv);
+
         if (pending_rs) {
             flush_generation(&pending_gen);
             pending_rs = 0;
         }
     }
 
-    //t_end_ns = now_ns();
     fprintf(stderr, "[GW] Stopping...\n");
 
-    fprintf(stderr, "[GW] recv() failed, rv=%d, errno=%d\n", rv, errno);
+    if (!stop_flag && rv < 0)
+        fprintf(stderr,
+                "[GW] receive loop ended with rv=%d, errno=%d\n",
+                rv, errno);
 
-    double duration_s = (double)(t_end_ns - t_start_ns) / 1e9;
-    double thr_fwd_pps = duration_s > 0 ? (double)stats.pkts_forwarded / duration_s : 0.0;
-    double thr_orig_pps = duration_s > 0 ? (double)stats.pkts_original / duration_s : 0.0;
-    double thr_fwd_mbps = duration_s > 0 ? (stats.bytes_forwarded * 8.0) / (duration_s * 1e6) : 0.0;
-    double thr_orig_mbps = duration_s > 0 ? (stats.bytes_original * 8.0) / (duration_s * 1e6) : 0.0;
+    double duration_s =
+        (t_start_ns != 0 && t_end_ns >= t_start_ns)
+            ? (double)(t_end_ns - t_start_ns) / 1e9
+            : 0.0;
+
+    double thr_fwd_pps =
+        duration_s > 0
+            ? (double)stats.pkts_forwarded / duration_s
+            : 0.0;
+
+    double thr_orig_pps =
+        duration_s > 0
+            ? (double)stats.pkts_original / duration_s
+            : 0.0;
+
+    double thr_fwd_mbps =
+        duration_s > 0
+            ? (stats.bytes_forwarded * 8.0) / (duration_s * 1e6)
+            : 0.0;
+
+    double thr_orig_mbps =
+        duration_s > 0
+            ? (stats.bytes_original * 8.0) / (duration_s * 1e6)
+            : 0.0;
 
     fprintf(stderr,
             "\n[GW] === Computational statistics ===\n"
@@ -791,23 +991,46 @@ int main(int argc, char *argv[])
             thr_fwd_mbps,
             thr_orig_mbps,
             stats.enc_calls,
-            stats.enc_calls ? (stats.enc_time_ns / stats.enc_calls) / 1000.0 : 0.0,
+            stats.enc_calls
+                ? (stats.enc_time_ns / stats.enc_calls) / 1000.0
+                : 0.0,
             stats.nfq_pkts,
-            stats.nfq_pkts ?
-            (stats.nfq_latency_ns / stats.nfq_pkts) / 1000.0 : 0.0
-            );
+            stats.nfq_pkts
+                ? (stats.nfq_latency_ns / stats.nfq_pkts) / 1000.0
+                : 0.0);
 
-    /* Flush any remaining generation (parity only; originals ya enviados) */
+    /*
+     * Flush any remaining completed generation.
+     * Originals have already been sent.
+     */
     if (pending_rs) {
         flush_generation(&pending_gen);
         pending_rs = 0;
     }
 
-    if (qh) nfq_destroy_queue(qh);
-    if (h)  nfq_close(h);
-    if (sock_a >= 0) close(sock_a);
-    if (sock_b >= 0) close(sock_b);
-    if (rs) free_rs_char(rs);
+    if (write_summary_csv(duration_s,
+                          thr_fwd_pps,
+                          thr_orig_pps,
+                          thr_fwd_mbps,
+                          thr_orig_mbps) != 0) {
+        fprintf(stderr,
+                "[GW] WARNING: structured summary was not written\n");
+    }
+
+    if (qh)
+        nfq_destroy_queue(qh);
+
+    if (h)
+        nfq_close(h);
+
+    if (sock_a >= 0)
+        close(sock_a);
+
+    if (sock_b >= 0)
+        close(sock_b);
+
+    if (rs)
+        free_rs_char(rs);
 
     return EXIT_SUCCESS;
 }
