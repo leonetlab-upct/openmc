@@ -2,19 +2,21 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "=================================="
 echo "OpenMC Test Suite"
 echo "=================================="
+echo
+
+echo "[1/1] Smoke checks"
+bash "${ROOT_DIR}/tests/smoke/run_smoke.sh"
 
 echo
-echo "[1/2] Smoke tests"
-"${SCRIPT_DIR}/smoke/run_smoke.sh"
+echo "OpenMC default test suite: PASS"
 
-echo
-echo "[2/2] Baseline validation"
-"${SCRIPT_DIR}/baseline/run_baseline.sh"
-
-echo
-echo "All tests completed successfully."
+if [[ "${1:-}" == "--with-bleo" ]]; then
+    echo
+    echo "[optional] bLEO integration baseline"
+    bash "${ROOT_DIR}/tests/baseline/run_baseline.sh"
+fi
