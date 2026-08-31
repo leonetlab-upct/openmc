@@ -51,7 +51,7 @@
 #include <signal.h>
 
 /* Runtime configuration with bLEO-compatible defaults. */
-#define OPENMC_VERSION       "0.1.0"
+#define OPENMC_VERSION       "0.1.1"
 #define DEFAULT_IFACE_A      "term1gs1"
 #define DEFAULT_IFACE_B      "term1gs2"
 #define DEFAULT_PEER_A       "10.102.99.1"
@@ -136,7 +136,7 @@ static void usage(FILE *stream, const char *prog)
         "  --peer-port PORT      Receiver UDP port (default: %u)\\n"
         "  --block-size K        Source symbols per block (1..%d; default: %d)\\n"
         "  --repairs R           Repair symbols (0..%d; default: %d)\\n"
-        "  --policy default      RS supports only the default policy in v0.1.0\\n"
+        "  --policy default      RS supports only the default policy in v0.1.1\\n"
         "  --nfqueue-num N       NFQUEUE number (default: %u)\\n"
         "  --run-id ID            Experimental run identifier\\n"
         "  --summary-output PATH  Write structured run summary CSV\\n"
