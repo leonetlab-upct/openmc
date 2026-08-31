@@ -4,7 +4,9 @@
 
 The software transparently intercepts application traffic through Linux `NFQUEUE`, aggregates packets into coding blocks, applies Reed--Solomon or systematic RaptorQ coding, monitors path quality, distributes source and repair symbols over multiple communication paths, and reconstructs the original traffic at an Edge Receiver.
 
-This repository contains **OpenMC v0.1.0**, the software release described and evaluated in the associated SoftwareX article.
+This repository contains **OpenMC v0.1.1**, the current software release associated with the revised SoftwareX submission.
+
+OpenMC v0.1.1 extends the original v0.1.0 release with reproducibility instrumentation, repeated-experiment orchestration, structured metrics, resource monitoring, statistical-analysis support, testing and contributor documentation, while preserving the packet-processing architecture evaluated in the article.
 
 ## Scope
 
@@ -253,6 +255,8 @@ See [tests/README.md](tests/README.md) for details.
 - [Release procedure](docs/release.md)
 - [Reproducible baseline](reproducibility/baseline/README.md)
 
+The frozen raw and processed experimental data supporting the SoftwareX evaluation are archived on Zenodo: https://doi.org/10.5281/zenodo.22142700
+
 ## Citation
 
 Citation metadata are provided in `CITATION.cff`. GitHub displays the recommended citation through **Cite this repository**.
@@ -264,5 +268,5 @@ OpenMC is distributed under the **GNU General Public License v3.0 only**. See `L
 ## Version
 
 ```text
-OpenMC v0.1.0
+OpenMC v0.1.1
 ```
