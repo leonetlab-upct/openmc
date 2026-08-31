@@ -19,6 +19,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <inttypes.h>
+#include <limits.h>
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
@@ -57,6 +59,9 @@ struct rs_receiver_config {
     uint16_t listen_port;
     uint16_t block_size;
     uint16_t repairs;
+    char run_id[128];
+    char summary_output[PATH_MAX];
+    char block_metrics_output[PATH_MAX];
 };
 
 static struct rs_receiver_config runtime_cfg = {
@@ -65,7 +70,10 @@ static struct rs_receiver_config runtime_cfg = {
     .out_iface = DEFAULT_OUT_IFACE,
     .listen_port = DEFAULT_LISTEN_PORT,
     .block_size = K_DATA,
-    .repairs = DEFAULT_PARITY
+    .repairs = DEFAULT_PARITY,
+    .run_id = "",
+    .summary_output = "",
+    .block_metrics_output = ""
 };
 
 
@@ -103,6 +111,9 @@ static void usage(FILE *stream, const char *prog)
         "  --listen-port PORT      Symbol UDP port (default: %u)\\n"
         "  --block-size K          Source symbols per block (1..%d)\\n"
         "  --repairs R             Repair symbols (0..%d)\\n"
+        "  --run-id ID             Experimental run identifier\\n"
+        "  --summary-output PATH   Write structured run summary CSV\\n"
+        "  --block-metrics-output PATH Write raw per-block metrics CSV\\n"
         "  -h, --help              Show this help\\n"
         "  -V, --version           Show version\\n",
         prog, DEFAULT_IN_IFACE_A, DEFAULT_IN_IFACE_B, DEFAULT_OUT_IFACE,
@@ -112,7 +123,8 @@ static void usage(FILE *stream, const char *prog)
 static int parse_runtime_options(int argc, char **argv)
 {
     enum {
-        OPT_IN_A = 1000, OPT_IN_B, OPT_OUT, OPT_PORT, OPT_BLOCK, OPT_REPAIRS
+        OPT_IN_A = 1000, OPT_IN_B, OPT_OUT, OPT_PORT, OPT_BLOCK, OPT_REPAIRS,
+        OPT_RUN_ID, OPT_SUMMARY_OUTPUT, OPT_BLOCK_METRICS_OUTPUT
     };
     static const struct option opts[] = {
         {"listen-iface-a", required_argument, NULL, OPT_IN_A},
@@ -121,6 +133,9 @@ static int parse_runtime_options(int argc, char **argv)
         {"listen-port", required_argument, NULL, OPT_PORT},
         {"block-size", required_argument, NULL, OPT_BLOCK},
         {"repairs", required_argument, NULL, OPT_REPAIRS},
+        {"run-id", required_argument, NULL, OPT_RUN_ID},
+        {"summary-output", required_argument, NULL, OPT_SUMMARY_OUTPUT},
+        {"block-metrics-output", required_argument, NULL, OPT_BLOCK_METRICS_OUTPUT},
         {"help", no_argument, NULL, 'h'},
         {"version", no_argument, NULL, 'V'},
         {NULL, 0, NULL, 0}
@@ -162,6 +177,15 @@ static int parse_runtime_options(int argc, char **argv)
             if (parse_u16(optarg, 0, MAX_PARITY, &number) != 0) return -1;
             runtime_cfg.repairs = number;
             break;
+        case OPT_RUN_ID:
+            if (set_string(runtime_cfg.run_id, sizeof(runtime_cfg.run_id), optarg, "--run-id") != 0) return -1;
+            break;
+        case OPT_SUMMARY_OUTPUT:
+            if (set_string(runtime_cfg.summary_output, sizeof(runtime_cfg.summary_output), optarg, "--summary-output") != 0) return -1;
+            break;
+        case OPT_BLOCK_METRICS_OUTPUT:
+            if (set_string(runtime_cfg.block_metrics_output, sizeof(runtime_cfg.block_metrics_output), optarg, "--block-metrics-output") != 0) return -1;
+            break;
         case 'h':
             usage(stdout, argv[0]);
             exit(EXIT_SUCCESS);
@@ -173,6 +197,10 @@ static int parse_runtime_options(int argc, char **argv)
         }
     }
     if (optind != argc) return -1;
+    if ((runtime_cfg.summary_output[0] || runtime_cfg.block_metrics_output[0]) && !runtime_cfg.run_id[0]) {
+        fprintf(stderr, "[OpenMC] --run-id is required when structured output is enabled\n");
+        return -1;
+    }
 
     if (if_nametoindex(runtime_cfg.in_iface_a) == 0 ||
         if_nametoindex(runtime_cfg.in_iface_b) == 0 ||
@@ -207,6 +235,20 @@ struct gs_stats {
 };
 
 static struct gs_stats gs_stats = {0};
+static FILE *g_block_metrics_fp = NULL;
+
+static int open_block_metrics(void)
+{
+    if (!runtime_cfg.block_metrics_output[0]) return 0;
+    g_block_metrics_fp = fopen(runtime_cfg.block_metrics_output, "w");
+    if (!g_block_metrics_fp) { perror("[GS-RS] fopen(block-metrics-output)"); return -1; }
+    fprintf(g_block_metrics_fp,
+            "run_id,backend,block_id,k,first_symbol_rx_ns,last_original_delivery_ns,"
+            "block_latency_us,decode_required,decode_success,completed,useful_bytes\n");
+    fflush(g_block_metrics_fp);
+    return 0;
+}
+
 
 
 struct fec_fragment_hdr {
@@ -384,6 +426,32 @@ static struct gen_state *get_gen_state(uint16_t gen_id)
 }
 
 /* Forward one IP packet to destination_server.c via raw socket. */
+static uint64_t application_payload_bytes(const uint8_t *pkt, int len)
+{
+    if (!pkt || len < (int)sizeof(struct iphdr)) return 0;
+
+    const struct iphdr *ip = (const struct iphdr *)pkt;
+    int ip_header_len = (int)ip->ihl * 4;
+    if (ip_header_len < (int)sizeof(struct iphdr) || ip_header_len > len) return 0;
+
+    int ip_total_len = (int)ntohs(ip->tot_len);
+    if (ip_total_len <= 0 || ip_total_len > len) ip_total_len = len;
+
+    if (ip->protocol == IPPROTO_UDP) {
+        if (ip_total_len < ip_header_len + (int)sizeof(struct udphdr)) return 0;
+        const struct udphdr *udp = (const struct udphdr *)(pkt + ip_header_len);
+        int udp_len = (int)ntohs(udp->len);
+        int max_udp_len = ip_total_len - ip_header_len;
+        if (udp_len < (int)sizeof(struct udphdr) || udp_len > max_udp_len)
+            udp_len = max_udp_len;
+        return (uint64_t)(udp_len - (int)sizeof(struct udphdr));
+    }
+
+    /* The SoftwareX campaign uses UDP. Non-UDP payload is deliberately not
+     * counted as application goodput by this v0.1.0 metric. */
+    return 0;
+}
+
 static void forward_ip_packet(const uint8_t *pkt, int len, int is_original)
 {
     if (len <= 0) return;
@@ -542,7 +610,7 @@ static void try_decode_generation(struct gen_state *gs)
             forward_ip_packet(gs->data[i], len, 0);
             gs->data_forwarded[i] = 1;
 
-            gs->useful_bytes += len;
+            gs->useful_bytes += application_payload_bytes(gs->data[i], len);
             gs->last_fwd_ns = now_ns();
         }
     }
@@ -576,7 +644,7 @@ static void process_generation(struct gen_state *gs)
             forward_ip_packet(gs->data[i], len, 1);
             gs->data_forwarded[i] = 1;
 
-            gs->useful_bytes += len;
+            gs->useful_bytes += application_payload_bytes(gs->data[i], len);
             gs->last_fwd_ns = now_ns();
         }
     }
@@ -630,6 +698,19 @@ static void process_generation(struct gen_state *gs)
             }
 
             gs_stats.total_useful_bytes += gs->useful_bytes;
+
+            if (g_block_metrics_fp) {
+                uint64_t latency_us = 0;
+                if (gs->first_rx_ns && gs->last_fwd_ns && gs->last_fwd_ns >= gs->first_rx_ns)
+                    latency_us = (gs->last_fwd_ns - gs->first_rx_ns) / 1000u;
+                fprintf(g_block_metrics_fp,
+                        "%s,Reed-Solomon,%u,%u,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%d,%d,%d,%" PRIu64 "\n",
+                        runtime_cfg.run_id, gs->gen_id, runtime_cfg.block_size,
+                        gs->first_rx_ns, gs->last_fwd_ns, latency_us,
+                        gs->decode_attempted ? 1 : 0, gs->decode_succeeded ? 1 : 0,
+                        missing_final == 0 ? 1 : 0, gs->useful_bytes);
+                fflush(g_block_metrics_fp);
+            }
 
             fprintf(stderr,
                     "[GS-STATS] gen=%u DONE (len=%d) [loss=%d]\n",
@@ -755,6 +836,57 @@ static void handle_fragment(const uint8_t *buf, ssize_t len)
     process_generation(gs);
 }
 
+static int flush_sync_close(FILE **fp_ptr, const char *label)
+{
+    if (!fp_ptr || !*fp_ptr) return 0;
+
+    FILE *fp = *fp_ptr;
+    int rc = 0;
+    if (fflush(fp) != 0) {
+        fprintf(stderr, "%s: fflush failed: %s\n", label, strerror(errno));
+        rc = -1;
+    }
+    int fd = fileno(fp);
+    if (fd >= 0 && fsync(fd) != 0) {
+        fprintf(stderr, "%s: fsync failed: %s\n", label, strerror(errno));
+        rc = -1;
+    }
+    if (fclose(fp) != 0) {
+        fprintf(stderr, "%s: fclose failed: %s\n", label, strerror(errno));
+        rc = -1;
+    }
+    *fp_ptr = NULL;
+    return rc;
+}
+
+static int write_summary_csv(double duration_s, double thr_fwd_pps,
+                             double thr_orig_pps, double thr_fwd_mbps,
+                             double thr_orig_mbps, double goodput_mbps,
+                             double avg_block_latency_ms)
+{
+    if (!runtime_cfg.summary_output[0]) return 0;
+    FILE *fp = fopen(runtime_cfg.summary_output, "w");
+    if (!fp) { perror("[GS-RS] fopen(summary-output)"); return -1; }
+    fprintf(fp,
+            "run_id,component,backend,duration_s,symbols_received,packets_forwarded,"
+            "original_packets_forwarded,bytes_forwarded,bytes_original,throughput_pps,"
+            "original_throughput_pps,throughput_mbps,original_throughput_mbps,goodput_mbps,"
+            "decode_calls,decode_mean_us,completed_blocks,decode_failures,average_block_latency_ms,"
+            "data_symbols,repair_symbols,repair_symbols_consumed\n");
+    fprintf(fp,
+            "%s,receiver,Reed-Solomon,%.9f,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
+            ",%.9f,%.9f,%.9f,%.9f,%.9f,%" PRIu64 ",%.9f,%" PRIu64 ",%" PRIu64 ",%.9f,%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+            runtime_cfg.run_id, duration_s, gs_stats.pkts_received, gs_stats.pkts_forwarded,
+            gs_stats.pkts_original, gs_stats.bytes_forwarded, gs_stats.bytes_original,
+            thr_fwd_pps, thr_orig_pps, thr_fwd_mbps, thr_orig_mbps, goodput_mbps,
+            gs_stats.dec_calls,
+            gs_stats.dec_calls ? (gs_stats.dec_time_ns / (double)gs_stats.dec_calls) / 1000.0 : 0.0,
+            gs_stats.completed_generations, g_generations_decode_failed, avg_block_latency_ms,
+            g_total_data_fragments, g_total_parity_fragments, g_total_parity_consumed);
+    if (flush_sync_close(&fp, "[GS-RS] summary-output") != 0) return -1;
+    return 0;
+}
+
 static void sigint_handler(int sig)
 {
     (void)sig;
@@ -788,6 +920,7 @@ int main(int argc, char *argv[])
     }
 
     parity_symbols = runtime_cfg.repairs;
+    if (open_block_metrics() != 0) return EXIT_FAILURE;
 
     fprintf(stderr,
         "[Edge Receiver RS] block-size=%u, repairs=%u, listen-port=%u\n",
@@ -885,7 +1018,10 @@ int main(int argc, char *argv[])
     }
     fprintf(stderr, "[GS-STATS] Consumed FEC ratio (consumed/data): %.3f\n", fec_ratio_cons);
 
-    double duration_s = (double)(gs_stats.experiment_end_ns - gs_stats.experiment_start_ns) / 1e9;
+    double duration_s = (gs_stats.experiment_start_ns != 0 &&
+                         gs_stats.experiment_end_ns >= gs_stats.experiment_start_ns)
+                      ? (double)(gs_stats.experiment_end_ns - gs_stats.experiment_start_ns) / 1e9
+                      : 0.0;
     double thr_fwd_pps  = duration_s > 0 ? (double)gs_stats.pkts_forwarded / duration_s : 0.0;
     double thr_orig_pps = duration_s > 0 ? (double)gs_stats.pkts_original  / duration_s : 0.0;
     double thr_fwd_mbps  = duration_s > 0 ? (gs_stats.bytes_forwarded * 8.0) / (duration_s * 1e6) : 0.0;
@@ -937,6 +1073,12 @@ int main(int argc, char *argv[])
             gs_stats.completed_generations
             );
 
+    if (write_summary_csv(duration_s, thr_fwd_pps, thr_orig_pps,
+                          thr_fwd_mbps, thr_orig_mbps, goodput_mbps, avg_gen_latency_ms) != 0)
+        fprintf(stderr, "[GS-RS] WARNING: structured summary was not written\n");
+    if (flush_sync_close(&g_block_metrics_fp, "[GS-RS] block-metrics-output") != 0)
+        fprintf(stderr, "[GS-RS] WARNING: block metrics were not cleanly flushed\n");
+
     if (sock_a >= 0) close(sock_a);
     if (sock_b >= 0) close(sock_b);
     if (raw_sock >= 0) close(raw_sock);
@@ -944,4 +1086,3 @@ int main(int argc, char *argv[])
 
     return EXIT_SUCCESS;
 }
-
