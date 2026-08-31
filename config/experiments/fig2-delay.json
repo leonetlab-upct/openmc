@@ -1,0 +1,19 @@
+{
+  "campaign": "fig2",
+  "delays_ms": [1, 20, 40, 60, 80, 100],
+  "replicates": 10,
+  "common": {
+    "delay_a_ms": 1,
+    "block_size": 8,
+    "repairs": 2,
+    "packet_size": 1000,
+    "rate_pps": 200,
+    "duration_s": 10,
+    "expected_packets": 2000,
+    "resource_interval_ms": 500
+  },
+  "configurations": [
+    {"backend": "rs", "policy": "default"},
+    {"backend": "rq", "policy": "default"}
+  ]
+}
