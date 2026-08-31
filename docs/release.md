@@ -41,43 +41,50 @@ in the source-code repository.
 
 ## 3. Validate the source tree
 
-Run the standard source-tree checks:
+Run the standard portable source-tree checks:
 
 ```bash
+make clean
 make check
 ```
 
-Check the Python scripts used by the experimental and reproducibility
-workflows:
+This compiles the portable traffic applications and validates the Python
+scripts used by the monitoring, experimental, and reproducibility workflows.
+
+The complete native build additionally requires NFQUEUE, libfec, and lcrq
+and should be performed in an environment providing these dependencies:
 
 ```bash
-python3 -m py_compile \
-  scripts/collect_resources.py \
-  scripts/set_bleo_delay.py \
-  scripts/run_experiment.py \
-  scripts/run_matrix.py \
-  reproducibility/analysis/common.py \
-  reproducibility/analysis/validate_runs.py \
-  reproducibility/analysis/aggregate_results.py \
-  reproducibility/analysis/generate_figures.py \
-  reproducibility/analysis/freeze_fig2.py \
-  reproducibility/analysis/freeze_fig3.py \
-  reproducibility/validation/validate_instrumentation.py
+make all
 ```
+
+For the reference deployment, these dependencies are available in the
+Ubuntu/bLEO container environment.
 
 ## 4. Run the test suite
 
-In a correctly configured OpenMC/bLEO experimental environment, run:
+Run the default portable smoke checks:
 
 ```bash
-sudo ./tests/run_tests.sh
+bash tests/run_tests.sh
 ```
 
-The test runner executes the smoke and baseline validation workflows
-documented in `tests/README.md`.
+The default test suite does not require the complete OpenMC FEC build
+environment.
 
-Review the output and confirm that the tests complete successfully before
-creating the release.
+When a configured bLEO environment is available, the historical integration
+and regression workflow can additionally be invoked using:
+
+```bash
+bash tests/run_tests.sh --with-bleo
+```
+
+The bLEO integration workflow requires the complete container environment,
+including NFQUEUE, libfec, and lcrq. It is retained as an additional
+integration and compatibility check rather than as the sole
+release-acceptance criterion.
+
+See `tests/README.md` and `docs/validation.md` for details.
 
 ## 5. Verify release metadata
 
@@ -102,9 +109,23 @@ head -n 80 CHANGELOG.md
 The version and release date should agree across `VERSION`,
 `CITATION.cff`, and `CHANGELOG.md`.
 
-## 6. Create the GitHub release
+For a release that updates version strings in the native executables,
+verify the corresponding `--version` interfaces in a complete build
+environment.
 
-Once all validation checks have passed:
+## 6. Verify reproducibility support
+
+For releases associated with publication experiments, review the
+reproducibility workflow under `reproducibility/` and verify that the
+publication-facing documentation points to the corresponding frozen dataset.
+
+The source repository should contain the maintained experimental
+orchestration, configuration, analysis, and validation tools, while frozen
+raw and processed publication data remain archived separately.
+
+## 7. Create the GitHub release
+
+Once the release checks have been completed:
 
 1. Open the GitHub repository.
 2. Select **Releases**.
@@ -118,7 +139,7 @@ Once all validation checks have passed:
 
 GitHub automatically provides source-code archives for the tagged release.
 
-## 7. Verify the published release
+## 8. Verify the published release
 
 After publication, verify that the tag and release are publicly available
 and point to the intended commit.
@@ -136,10 +157,11 @@ Replace `vX.Y.Z` with the published release tag.
 Also verify that the GitHub release page displays the expected version,
 release notes, and source-code archives.
 
-## 8. Publication reproducibility
+## 9. Publication reproducibility
 
-For releases associated with the SoftwareX publication, the frozen raw and
-processed experimental data are archived separately on Zenodo:
+For the OpenMC v0.1.1 release associated with the revised SoftwareX
+submission, the frozen raw and processed experimental data are archived
+separately on Zenodo:
 
 https://doi.org/10.5281/zenodo.22142700
 
