@@ -1,9 +1,0 @@
-Reference baseline
-
-Generated packets : 2000
-
-Delivered packets : 2000
-
-Completed blocks : 250
-
-Decode failures : 0
