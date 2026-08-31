@@ -1,4 +1,4 @@
-// destination_server.c - UDP destination application with run_id filtering, auto-reset, and gap detection
+// destination_server.c - UDP destination application with run_id filtering and robust run delimitation
 // Uso:
 //   ./destination-server -a 0.0.0.0 -p 12345 -s 2048 -n 2000
 // -n: número esperado de datagramas (opcional); si no se pasa, se asume 0..max_seq
@@ -14,6 +14,7 @@
 #include <limits.h>
 #include <errno.h>
 #include <sys/time.h>
+#include <signal.h>
 
 #define DEFAULT_PORT  12345
 #define DEFAULT_BUFSZ 2048
@@ -31,6 +32,12 @@ static uint8_t *seen = NULL;
 static size_t   seen_cap = 0;
 static uint64_t uniques = 0, dups = 0;
 static uint32_t min_seq = UINT32_MAX, max_seq = 0;
+static volatile sig_atomic_t stop_requested = 0;
+
+static void handle_stop_signal(int signo) {
+    (void)signo;
+    stop_requested = 1;
+}
 
 static void run_reset(size_t cap) {
     if (seen) free(seen);
@@ -87,6 +94,20 @@ static void print_block_stats(int expected) {
            blocks, full, partial, empty);
 }
 
+static void print_run_summary(uint32_t run_id, uint64_t matched, int expected) {
+    int total_space = (expected > 0) ? expected : (int)(max_seq + 1);
+    int missing = (total_space > 0) ? (total_space - (int)uniques) : 0;
+
+    printf("[destination-server] SUMMARY run=0x%08x:\n", run_id);
+    printf("  recibidos_totales=%" PRIu64 "  unicos=%" PRIu64 "  duplicados=%" PRIu64 "\n",
+           matched, uniques, dups);
+    printf("  seq[min..max]=[%u..%u]  esperado=%d  missing=%d\n",
+           (min_seq == UINT32_MAX ? 0 : min_seq), max_seq, (expected > 0 ? expected : -1), missing);
+    if (missing > 0) print_missing_sample(expected);
+    print_block_stats(expected);
+    fflush(stdout);
+}
+
 /* ---- Main ---- */
 int main(int argc, char **argv) {
     const char *ip_escucha = "0.0.0.0";
@@ -107,6 +128,15 @@ int main(int argc, char **argv) {
 
     if (buf_sz < 8) { fprintf(stderr, "[!] tam_buffer debe ser >= 8\n"); return 1; }
 
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handle_stop_signal;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGINT, &sa, NULL) < 0 || sigaction(SIGTERM, &sa, NULL) < 0) {
+        perror("sigaction");
+        return 1;
+    }
+
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) { perror("socket"); return 1; }
 
@@ -114,7 +144,7 @@ int main(int argc, char **argv) {
     int rcvbuf = 4*1024*1024;
     setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 
-    // Timeout de recepción: 1.5 s sin paquetes => consideramos que ha acabado el run
+    // Timeout de recepción: permite despertar periódicamente sin delimitar el run.
     struct timeval tv;
     tv.tv_sec = 1;
     tv.tv_usec = 500000; // 1.5 s
@@ -139,38 +169,24 @@ int main(int argc, char **argv) {
 
     uint32_t current_run_id = 0;
     int have_run = 0;
+    int summary_emitted = 0;
     uint64_t matched = 0;
 
     // Inicializa el bitmap (capacidad según expected o por defecto)
     run_reset( (expected>0) ? (size_t)expected : SEEN_CAP_DEFAULT );
 
-    while (1) {
+    while (!stop_requested) {
         struct sockaddr_in cli; socklen_t clen = sizeof(cli);
         ssize_t n = recvfrom(sock, buffer, buf_sz, 0, (struct sockaddr*)&cli, &clen);
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // Timeout: no hay más paquetes por ahora. Si tenemos run activo, resumen y reset.
-                if (have_run) {
-                    int total_space = (expected>0) ? expected : (int)(max_seq + 1); // suponemos 0..max
-                    int missing = (total_space > 0) ? (total_space - (int)uniques) : 0;
-
-                    printf("[destination-server] SUMMARY run=0x%08x:\n", current_run_id);
-                    printf("  recibidos_totales=%" PRIu64 "  unicos=%" PRIu64 "  duplicados=%" PRIu64 "\n",
-                           matched, uniques, dups);
-                    printf("  seq[min..max]=[%u..%u]  esperado=%d  missing=%d\n",
-                           (min_seq==UINT32_MAX?0:min_seq), max_seq, (expected>0?expected:-1), missing);
-                    if (missing > 0) print_missing_sample(expected);
-                    print_block_stats(expected);
-
-                    // Reset to accept a new run without restarting the server
-                    have_run = 0;
-                    matched = 0;
-                    current_run_id = 0;
-                    run_reset( (expected>0) ? (size_t)expected : SEEN_CAP_DEFAULT );
-                    puts("[destination-server] Waiting for a new run...");
-                }
-                continue; // seguir esperando paquetes
+                // A receive timeout is not an experiment boundary. Keep the
+                // current run active so late/reordered packets with the same
+                // run_id remain part of the same measurement.
+                continue;
             }
+            if (errno == EINTR && stop_requested) break;
+            if (errno == EINTR) continue;
             perror("recvfrom");
             break;
         }
@@ -184,14 +200,14 @@ int main(int argc, char **argv) {
 
         // AUTO-RESET: si ya teníamos run y llega otro run_id con seq==0, cambiamos de run
         if (n >= 8 && have_run && rid != current_run_id && seq == 0) {
-            current_run_id = rid; matched = 0;
+            current_run_id = rid; matched = 0; summary_emitted = 0;
             printf("[destination-server] New run_id detected: 0x%08x (auto-reset)\n", current_run_id);
             run_reset( (expected>0) ? (size_t)expected : SEEN_CAP_DEFAULT );
         }
 
         // Primer paquete con cabecera válida => fijamos run
         if (!have_run && n >= 8) {
-            current_run_id = rid; have_run = 1; matched = 0;
+            current_run_id = rid; have_run = 1; matched = 0; summary_emitted = 0;
             printf("[destination-server] New run_id set: 0x%08x\n", current_run_id);
             run_reset( (expected>0) ? (size_t)expected : SEEN_CAP_DEFAULT );
         }
@@ -203,24 +219,22 @@ int main(int argc, char **argv) {
 
             printf("[destination-server] #%" PRIu64 " (run=%08x seq=%u) from %s:%d (%zd bytes)\n",
                    matched, rid, seq, inet_ntoa(cli.sin_addr), ntohs(cli.sin_port), n);
+
+            if (expected > 0 && uniques >= (uint64_t)expected && !summary_emitted) {
+                print_run_summary(current_run_id, matched, expected);
+                summary_emitted = 1;
+            }
         } else {
             // Tráfico de otros runs u otros flujos: ignorado
             // printf("[destination-server] (otros) %zd bytes de %s:%d\n", n, inet_ntoa(cli.sin_addr), ntohs(cli.sin_port));
         }
     }
 
-    // Resumen al salir del bucle (por si se sale por error sin timeout)
-    if (have_run) {
-        int total_space = (expected>0) ? expected : (int)(max_seq + 1); // suponemos 0..max
-        int missing = (total_space > 0) ? (total_space - (int)uniques) : 0;
-
-        printf("[destination-server] SUMMARY run=0x%08x:\n", current_run_id);
-        printf("  recibidos_totales=%" PRIu64 "  unicos=%" PRIu64 "  duplicados=%" PRIu64 "\n",
-               matched, uniques, dups);
-        printf("  seq[min..max]=[%u..%u]  esperado=%d  missing=%d\n",
-               (min_seq==UINT32_MAX?0:min_seq), max_seq, (expected>0?expected:-1), missing);
-        if (missing > 0) print_missing_sample(expected);
-        print_block_stats(expected);
+    // Emit a partial/final summary only when the server is explicitly stopped
+    // (or exits on a non-timeout receive error). A summary already emitted after
+    // receiving every expected unique packet is not duplicated here.
+    if (have_run && !summary_emitted) {
+        print_run_summary(current_run_id, matched, expected);
     }
 
     free(seen);
@@ -228,3 +242,4 @@ int main(int argc, char **argv) {
     close(sock);
     return 0;
 }
+
