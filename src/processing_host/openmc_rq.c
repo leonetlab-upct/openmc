@@ -73,6 +73,16 @@
 #define K_DATA                  8
 #define MAX_BLOCKS              1024
 
+/*
+ * Experiment-6b: NFQUEUE hardening for offered-rate sweeps.
+ *
+ * Keep these values identical to the Reed-Solomon processing host so
+ * that RS and RaptorQ rate experiments use the same kernel/user-space
+ * queueing configuration.
+ */
+#define NFQUEUE_MAXLEN         65535
+#define NFQUEUE_RCVBUF_BYTES   (4 * 1024 * 1024)
+
 typedef enum {
     METRICS_SOURCE_FILE = 0,
     METRICS_SOURCE_SYNTHETIC,
@@ -92,6 +102,8 @@ struct runtime_config {
     int policy;
     metrics_source_t metrics_source;
     uint32_t seed;
+    char run_id[128];
+    char summary_output[PATH_MAX];
 };
 
 static struct runtime_config g_cfg = {
@@ -106,7 +118,9 @@ static struct runtime_config g_cfg = {
     .nfqueue_num = DEFAULT_NFQUEUE_NUM,
     .policy = 0,
     .metrics_source = METRICS_SOURCE_FILE,
-    .seed = 0x12345678u
+    .seed = 0x12345678u,
+    .run_id = "",
+    .summary_output = ""
 };
 
 /* --- Computational statistics --- */
@@ -249,6 +263,8 @@ static void print_usage(FILE *stream, const char *prog)
         "  --metrics-file PATH      Metrics file used in file mode\\n"
         "  --nfqueue-num N          NFQUEUE number (default: %u)\\n"
         "  --seed N                 Adaptive scheduler seed\\n"
+        "  --run-id ID              Experimental run identifier\\n"
+        "  --summary-output PATH    Write structured run summary CSV\\n"
         "  -h, --help               Show this help\\n"
         "  -V, --version            Show version\\n",
         prog, DEFAULT_IFACE_A, DEFAULT_IFACE_B, DEFAULT_PEER_A,
@@ -289,7 +305,8 @@ static int parse_arguments(int argc, char **argv)
     enum {
         OPT_IFACE_A = 1000, OPT_IFACE_B, OPT_PEER_A, OPT_PEER_B,
         OPT_PEER_PORT, OPT_BLOCK_SIZE, OPT_REPAIRS, OPT_POLICY,
-        OPT_METRICS_SOURCE, OPT_METRICS_FILE, OPT_NFQUEUE_NUM, OPT_SEED
+        OPT_METRICS_SOURCE, OPT_METRICS_FILE, OPT_NFQUEUE_NUM, OPT_SEED,
+        OPT_RUN_ID, OPT_SUMMARY_OUTPUT
     };
     static const struct option options[] = {
         {"iface-a", required_argument, NULL, OPT_IFACE_A},
@@ -304,6 +321,8 @@ static int parse_arguments(int argc, char **argv)
         {"metrics-file", required_argument, NULL, OPT_METRICS_FILE},
         {"nfqueue-num", required_argument, NULL, OPT_NFQUEUE_NUM},
         {"seed", required_argument, NULL, OPT_SEED},
+        {"run-id", required_argument, NULL, OPT_RUN_ID},
+        {"summary-output", required_argument, NULL, OPT_SUMMARY_OUTPUT},
         {"help", no_argument, NULL, 'h'},
         {"version", no_argument, NULL, 'V'},
         {NULL, 0, NULL, 0}
@@ -389,6 +408,14 @@ static int parse_arguments(int argc, char **argv)
             g_cfg.seed = (uint32_t)value;
             break;
         }
+        case OPT_RUN_ID:
+            if (copy_option(g_cfg.run_id, sizeof(g_cfg.run_id),
+                            optarg, "--run-id") != 0) return -1;
+            break;
+        case OPT_SUMMARY_OUTPUT:
+            if (copy_option(g_cfg.summary_output, sizeof(g_cfg.summary_output),
+                            optarg, "--summary-output") != 0) return -1;
+            break;
         case 'h':
             print_usage(stdout, argv[0]);
             exit(EXIT_SUCCESS);
@@ -402,6 +429,11 @@ static int parse_arguments(int argc, char **argv)
 
     if (optind != argc) {
         fprintf(stderr, "[OpenMC] Unexpected argument: %s\\n", argv[optind]);
+        return -1;
+    }
+
+    if (g_cfg.summary_output[0] && !g_cfg.run_id[0]) {
+        fprintf(stderr, "[OpenMC] --run-id is required when structured output is enabled\n");
         return -1;
     }
 
@@ -836,7 +868,7 @@ static struct decision_ops *decision_create_adaptive(uint16_t base_K,
     ad->base_K      = base_K;
     ad->min_repairs = min_rep;
     ad->max_repairs = max_rep;
-    ad->rand_state  = 0x12345678u;
+    ad->rand_state  = g_cfg.seed;
 
     memset(&ad->metrics, 0, sizeof(ad->metrics));
 
@@ -1261,6 +1293,60 @@ static int nfq_cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
     return nfq_set_verdict(qh, id, NF_DROP, 0, NULL);
 }
 
+static int flush_sync_close(FILE **fp_ptr, const char *label)
+{
+    if (!fp_ptr || !*fp_ptr) return 0;
+
+    FILE *fp = *fp_ptr;
+    int rc = 0;
+    if (fflush(fp) != 0) {
+        fprintf(stderr, "%s: fflush failed: %s\n", label, strerror(errno));
+        rc = -1;
+    }
+    int fd = fileno(fp);
+    if (fd >= 0 && fsync(fd) != 0) {
+        fprintf(stderr, "%s: fsync failed: %s\n", label, strerror(errno));
+        rc = -1;
+    }
+    if (fclose(fp) != 0) {
+        fprintf(stderr, "%s: fclose failed: %s\n", label, strerror(errno));
+        rc = -1;
+    }
+    *fp_ptr = NULL;
+    return rc;
+}
+
+static int write_summary_csv(double duration_s, double thr_fwd_pps,
+                             double thr_orig_pps, double thr_fwd_mbps,
+                             double thr_orig_mbps)
+{
+    if (!g_cfg.summary_output[0]) return 0;
+    FILE *fp = fopen(g_cfg.summary_output, "w");
+    if (!fp) { perror("[GW] fopen(summary-output)"); return -1; }
+    fprintf(fp,
+            "run_id,component,backend,policy,seed,duration_s,packets_intercepted,"
+            "symbols_forwarded,originals_forwarded,bytes_forwarded,bytes_original,"
+            "blocks_completed,throughput_pps,original_throughput_pps,throughput_mbps,"
+            "original_throughput_mbps,encoding_calls,encoding_mean_us,repair_calls,"
+            "repair_mean_us,nfqueue_samples,nfqueue_mean_us\n");
+    fprintf(fp,
+            "%s,gateway,RaptorQ,%s,%u,%.9f,%" PRIu64 ",%" PRIu64 ",%" PRIu64
+            ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%.9f,%.9f,%.9f,%.9f,"
+            "%" PRIu64 ",%.9f,%" PRIu64 ",%.9f,%" PRIu64 ",%.9f\n",
+            g_cfg.run_id, policy_name(g_policy), g_cfg.seed, duration_s,
+            stats.pkts_intercepted, stats.pkts_forwarded, stats.pkts_original,
+            stats.bytes_forwarded, stats.bytes_original, stats.blocks_completed,
+            thr_fwd_pps, thr_orig_pps, thr_fwd_mbps, thr_orig_mbps,
+            stats.enc_calls,
+            stats.enc_calls ? (stats.enc_time_ns / (double)stats.enc_calls) / 1000.0 : 0.0,
+            stats.repair_calls,
+            stats.repair_calls ? (stats.repair_time_ns / (double)stats.repair_calls) / 1000.0 : 0.0,
+            stats.nfq_pkts,
+            stats.nfq_pkts ? (stats.nfq_latency_ns / (double)stats.nfq_pkts) / 1000.0 : 0.0);
+    if (flush_sync_close(&fp, "[GW] summary-output") != 0) return -1;
+    return 0;
+}
+
 static void sigint_handler(int sig)
 {
     (void)sig;
@@ -1343,7 +1429,52 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
+    /*
+     * Experiment-6b NFQUEUE hardening.
+     *
+     * Increase the maximum kernel NFQUEUE length. Failure is reported
+     * but is not fatal so restrictive deployments remain diagnosable.
+     */
+    if (nfq_set_queue_maxlen(qh, NFQUEUE_MAXLEN) < 0) {
+        fprintf(stderr,
+                "[GW] Warning: nfq_set_queue_maxlen(%u) failed\n",
+                (unsigned)NFQUEUE_MAXLEN);
+    }
+
     fd = nfq_fd(h);
+
+    /*
+     * Increase the Netlink receive buffer and record the effective value.
+     * This configuration intentionally matches openmc_rs.c.
+     */
+    {
+        int requested_rcvbuf = NFQUEUE_RCVBUF_BYTES;
+        int effective_rcvbuf = 0;
+        socklen_t optlen = sizeof(effective_rcvbuf);
+
+        if (setsockopt(fd,
+                       SOL_SOCKET,
+                       SO_RCVBUF,
+                       &requested_rcvbuf,
+                       sizeof(requested_rcvbuf)) < 0) {
+            perror("[GW] setsockopt(SO_RCVBUF)");
+        }
+
+        if (getsockopt(fd,
+                       SOL_SOCKET,
+                       SO_RCVBUF,
+                       &effective_rcvbuf,
+                       &optlen) < 0) {
+            perror("[GW] getsockopt(SO_RCVBUF)");
+        } else {
+            fprintf(stderr,
+                    "[GW] NFQUEUE queue_maxlen=%u "
+                    "SO_RCVBUF requested=%d effective=%d bytes\n",
+                    (unsigned)NFQUEUE_MAXLEN,
+                    requested_rcvbuf,
+                    effective_rcvbuf);
+        }
+    }
 
     struct sigaction sa = {0};
     sa.sa_handler = sigint_handler;
@@ -1356,7 +1487,26 @@ int main(int argc, char *argv[])
 
     //t_start_ns = now_ns();
 
-    while (!stop_flag && (rv = recv(fd, buf, sizeof(buf), 0)) >= 0) {
+    rv = 0;
+    while (!stop_flag) {
+        rv = recv(fd, buf, sizeof(buf), 0);
+        if (rv < 0) {
+            if (errno == EINTR) {
+                if (stop_flag)
+                    break;
+                continue;
+            }
+
+            if (errno == ENOBUFS) {
+                fprintf(stderr,
+                        "[GW] NFQUEUE receive failure: ENOBUFS "
+                        "(kernel/user-space queue overflow)\n");
+            } else {
+                perror("[GW] recv");
+            }
+
+            break;
+        }
         static uint64_t pkt_counter = 0;
         pkt_counter++;
 
@@ -1389,9 +1539,11 @@ int main(int argc, char *argv[])
     //t_end_ns = now_ns();
     fprintf(stderr, "[GW] Stopping...\n");
 
-    fprintf(stderr, "[GW] recv() failed, rv=%d, errno=%d\n", rv, errno);
+    if (!stop_flag && rv < 0)
+        fprintf(stderr, "[GW] receive loop ended with rv=%d, errno=%d\n", rv, errno);
 
-    double duration_s = (double)(t_end_ns - t_start_ns) / 1e9;
+    double duration_s = (t_start_ns != 0 && t_end_ns >= t_start_ns)
+                      ? (double)(t_end_ns - t_start_ns) / 1e9 : 0.0;
     double thr_fwd_pps = duration_s > 0 ? (double)stats.pkts_forwarded / duration_s : 0.0;
     double thr_orig_pps = duration_s > 0 ? (double)stats.pkts_original / duration_s : 0.0;
     double thr_fwd_mbps = duration_s > 0 ? (stats.bytes_forwarded * 8.0) / (duration_s * 1e6) : 0.0;
@@ -1431,6 +1583,10 @@ int main(int argc, char *argv[])
             stats.nfq_pkts ? (stats.nfq_latency_ns / stats.nfq_pkts) / 1000.0 : 0.0
             );
 
+
+    if (write_summary_csv(duration_s, thr_fwd_pps, thr_orig_pps,
+                          thr_fwd_mbps, thr_orig_mbps) != 0)
+        fprintf(stderr, "[GW] WARNING: structured summary was not written\n");
 
     nfq_destroy_queue(qh);
     nfq_close(h);
