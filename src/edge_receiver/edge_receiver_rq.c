@@ -32,6 +32,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <limits.h>
 #include <inttypes.h>
 #include <string.h>
 #include <unistd.h>
@@ -68,6 +69,9 @@ struct receiver_config {
     char out_iface[IFNAMSIZ];
     uint16_t listen_port;
     uint16_t block_size;
+    char run_id[128];
+    char summary_output[PATH_MAX];
+    char block_metrics_output[PATH_MAX];
 };
 
 static struct receiver_config g_cfg = {
@@ -75,7 +79,10 @@ static struct receiver_config g_cfg = {
     .in_iface_b = DEFAULT_IN_IFACE_B,
     .out_iface = DEFAULT_OUT_IFACE,
     .listen_port = DEFAULT_LISTEN_PORT,
-    .block_size = DEFAULT_BLOCK_SIZE
+    .block_size = DEFAULT_BLOCK_SIZE,
+    .run_id = "",
+    .summary_output = "",
+    .block_metrics_output = ""
 };
 
 static int parse_u16(const char *text, uint16_t min_value, uint16_t max_value,
@@ -113,6 +120,9 @@ static void print_usage(FILE *stream, const char *prog)
         "  --output-iface IFACE     Raw output interface (default: %s)\n"
         "  --listen-port PORT       Symbol UDP port (default: %u)\n"
         "  --block-size K           Maximum source symbols, 1..%u (default: %u)\n"
+        "  --run-id ID              Experimental run identifier\n"
+        "  --summary-output PATH    Write structured run summary CSV\n"
+        "  --block-metrics-output PATH Write raw per-block metrics CSV\n"
         "  -h, --help               Show this help\n"
         "  -V, --version            Show version\n",
         prog, DEFAULT_IN_IFACE_A, DEFAULT_IN_IFACE_B, DEFAULT_OUT_IFACE,
@@ -123,7 +133,8 @@ static int parse_arguments(int argc, char **argv)
 {
     enum {
         OPT_LISTEN_IFACE_A = 1000, OPT_LISTEN_IFACE_B,
-        OPT_OUTPUT_IFACE, OPT_LISTEN_PORT, OPT_BLOCK_SIZE
+        OPT_OUTPUT_IFACE, OPT_LISTEN_PORT, OPT_BLOCK_SIZE,
+        OPT_RUN_ID, OPT_SUMMARY_OUTPUT, OPT_BLOCK_METRICS_OUTPUT
     };
     static const struct option options[] = {
         {"listen-iface-a", required_argument, NULL, OPT_LISTEN_IFACE_A},
@@ -131,6 +142,9 @@ static int parse_arguments(int argc, char **argv)
         {"output-iface", required_argument, NULL, OPT_OUTPUT_IFACE},
         {"listen-port", required_argument, NULL, OPT_LISTEN_PORT},
         {"block-size", required_argument, NULL, OPT_BLOCK_SIZE},
+        {"run-id", required_argument, NULL, OPT_RUN_ID},
+        {"summary-output", required_argument, NULL, OPT_SUMMARY_OUTPUT},
+        {"block-metrics-output", required_argument, NULL, OPT_BLOCK_METRICS_OUTPUT},
         {"help", no_argument, NULL, 'h'},
         {"version", no_argument, NULL, 'V'},
         {NULL, 0, NULL, 0}
@@ -159,6 +173,15 @@ static int parse_arguments(int argc, char **argv)
             if (parse_u16(optarg, 1, K_DATA, &parsed) != 0) return -1;
             g_cfg.block_size = parsed;
             break;
+        case OPT_RUN_ID:
+            if (copy_option(g_cfg.run_id, sizeof(g_cfg.run_id), optarg, "--run-id") != 0) return -1;
+            break;
+        case OPT_SUMMARY_OUTPUT:
+            if (copy_option(g_cfg.summary_output, sizeof(g_cfg.summary_output), optarg, "--summary-output") != 0) return -1;
+            break;
+        case OPT_BLOCK_METRICS_OUTPUT:
+            if (copy_option(g_cfg.block_metrics_output, sizeof(g_cfg.block_metrics_output), optarg, "--block-metrics-output") != 0) return -1;
+            break;
         case 'h':
             print_usage(stdout, argv[0]);
             exit(EXIT_SUCCESS);
@@ -170,6 +193,10 @@ static int parse_arguments(int argc, char **argv)
         }
     }
     if (optind != argc) return -1;
+    if ((g_cfg.summary_output[0] || g_cfg.block_metrics_output[0]) && !g_cfg.run_id[0]) {
+        fprintf(stderr, "[OpenMC] --run-id is required when structured output is enabled\n");
+        return -1;
+    }
     if (if_nametoindex(g_cfg.in_iface_a) == 0 ||
         if_nametoindex(g_cfg.in_iface_b) == 0 ||
         if_nametoindex(g_cfg.out_iface) == 0) {
@@ -191,8 +218,10 @@ struct gs_stats {
     uint64_t bytes_forwarded;      // bytes reales reenviados (len IP real)
     uint64_t bytes_original;       // bytes reales reenviados como ORIG
 
-    uint64_t dec_calls;            // llamadas a rq_decode
-    uint64_t dec_time_ns;          // tiempo total de decodificación RQ
+    uint64_t dec_calls;            // successful rq_decode calls (legacy metric)
+    uint64_t dec_time_ns;          // successful decode time (legacy metric)
+    uint64_t dec_attempts;         // all rq_decode invocations
+    uint64_t dec_attempt_time_ns;  // time across all rq_decode invocations
 
     uint64_t experiment_start_ns;
     uint64_t experiment_end_ns;
@@ -203,6 +232,20 @@ struct gs_stats {
 };
 
 static struct gs_stats gs_stats = {0};
+static FILE *g_block_metrics_fp = NULL;
+
+static int open_block_metrics(void)
+{
+    if (!g_cfg.block_metrics_output[0]) return 0;
+    g_block_metrics_fp = fopen(g_cfg.block_metrics_output, "w");
+    if (!g_block_metrics_fp) { perror("[GS-RQ] fopen(block-metrics-output)"); return -1; }
+    fprintf(g_block_metrics_fp,
+            "run_id,backend,block_id,k,first_symbol_rx_ns,last_original_delivery_ns,"
+            "block_latency_us,decode_required,decode_success,completed,useful_bytes\n");
+    fflush(g_block_metrics_fp);
+    return 0;
+}
+
 
 struct rq_data_hdr {
     uint16_t block_id;
@@ -273,6 +316,7 @@ struct rq_block_dec {
     int      forwarded_count;
 
     int      decoded;
+    int      decode_attempted;
     int      used_fec;
 
     /* Métricas comparables con RS */
@@ -344,6 +388,32 @@ static int create_raw_socket(const char *iface_name)
 }
 
 static int raw_sock = -1;
+
+static uint64_t application_payload_bytes(const uint8_t *pkt, int len)
+{
+    if (!pkt || len < (int)sizeof(struct iphdr)) return 0;
+
+    const struct iphdr *ip = (const struct iphdr *)pkt;
+    int ip_header_len = (int)ip->ihl * 4;
+    if (ip_header_len < (int)sizeof(struct iphdr) || ip_header_len > len) return 0;
+
+    int ip_total_len = (int)ntohs(ip->tot_len);
+    if (ip_total_len <= 0 || ip_total_len > len) ip_total_len = len;
+
+    if (ip->protocol == IPPROTO_UDP) {
+        if (ip_total_len < ip_header_len + (int)sizeof(struct udphdr)) return 0;
+        const struct udphdr *udp = (const struct udphdr *)(pkt + ip_header_len);
+        int udp_len = (int)ntohs(udp->len);
+        int max_udp_len = ip_total_len - ip_header_len;
+        if (udp_len < (int)sizeof(struct udphdr) || udp_len > max_udp_len)
+            udp_len = max_udp_len;
+        return (uint64_t)(udp_len - (int)sizeof(struct udphdr));
+    }
+
+    /* The SoftwareX campaign uses UDP. Non-UDP payload is deliberately not
+     * counted as application goodput by this v0.1.0 metric. */
+    return 0;
+}
 
 static int forward_ip_packet_counted(const uint8_t *pkt, int len, int is_orig)
 {
@@ -428,6 +498,17 @@ static void finalize_block(struct rq_block_dec *b)
     fprintf(stderr,
             "[GS-STATS] gen=%u DONE (len=%u)\n",
             b->block_id, b->T);
+    if (g_block_metrics_fp) {
+        uint64_t latency_us = 0;
+        if (b->first_rx_ns && b->last_fwd_ns && b->last_fwd_ns >= b->first_rx_ns)
+            latency_us = (b->last_fwd_ns - b->first_rx_ns) / 1000u;
+        fprintf(g_block_metrics_fp,
+                "%s,RaptorQ,%u,%u,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%d,%d,%d,%" PRIu64 "\n",
+                g_cfg.run_id, b->block_id, b->K, b->first_rx_ns, b->last_fwd_ns,
+                latency_us, b->decode_attempted ? 1 : 0, b->decoded ? 1 : 0,
+                all_forwarded ? 1 : 0, b->useful_bytes);
+        fflush(g_block_metrics_fp);
+    }
 
     if (b->rq) rq_free(b->rq);
     free(b->enc);
@@ -457,11 +538,16 @@ static void try_decode_and_forward(struct rq_block_dec *b)
         return;
 
     uint64_t t0 = now_ns();
+    b->decode_attempted = 1;
+    int decode_rc = rq_decode(b->rq, b->dec, b->enc, b->ESI, b->nesi);
+    uint64_t t1 = now_ns();
 
-    if (rq_decode(b->rq, b->dec, b->enc, b->ESI, b->nesi) != 0)
+    gs_stats.dec_attempts++;
+    gs_stats.dec_attempt_time_ns += (t1 - t0);
+
+    if (decode_rc != 0)
         return;
 
-    uint64_t t1 = now_ns();
     gs_stats.dec_calls++;
     gs_stats.dec_time_ns += (t1 - t0);
 
@@ -482,7 +568,7 @@ static void try_decode_and_forward(struct rq_block_dec *b)
                 b->used_fec     = 1;
                 b->forwarded_count++;
 
-                b->useful_bytes += b->T;
+                b->useful_bytes += application_payload_bytes(pkt, b->T);
                 b->last_fwd_ns = now_ns();
             }
 
@@ -594,7 +680,7 @@ maybe_forward_and_finish:
                     b->have_source[idx] = 1;
                     b->forwarded_count++;
 
-                    b->useful_bytes += T;
+                    b->useful_bytes += application_payload_bytes(symbol, T);
                     b->last_fwd_ns = now_ns();
                 }
             }
@@ -615,6 +701,60 @@ maybe_forward_and_finish:
 /* ----------------------------- */
 /* Señales y estadísticas        */
 /* ----------------------------- */
+
+static int flush_sync_close(FILE **fp_ptr, const char *label)
+{
+    if (!fp_ptr || !*fp_ptr) return 0;
+
+    FILE *fp = *fp_ptr;
+    int rc = 0;
+    if (fflush(fp) != 0) {
+        fprintf(stderr, "%s: fflush failed: %s\n", label, strerror(errno));
+        rc = -1;
+    }
+    int fd = fileno(fp);
+    if (fd >= 0 && fsync(fd) != 0) {
+        fprintf(stderr, "%s: fsync failed: %s\n", label, strerror(errno));
+        rc = -1;
+    }
+    if (fclose(fp) != 0) {
+        fprintf(stderr, "%s: fclose failed: %s\n", label, strerror(errno));
+        rc = -1;
+    }
+    *fp_ptr = NULL;
+    return rc;
+}
+
+static int write_summary_csv(double duration_s, double thr_fwd_pps,
+                             double thr_orig_pps, double thr_fwd_mbps,
+                             double thr_orig_mbps, double goodput_mbps,
+                             double avg_block_latency_ms)
+{
+    if (!g_cfg.summary_output[0]) return 0;
+    FILE *fp = fopen(g_cfg.summary_output, "w");
+    if (!fp) { perror("[GS-RQ] fopen(summary-output)"); return -1; }
+    fprintf(fp,
+            "run_id,component,backend,duration_s,symbols_received,packets_forwarded,"
+            "original_packets_forwarded,bytes_forwarded,bytes_original,throughput_pps,"
+            "original_throughput_pps,throughput_mbps,original_throughput_mbps,goodput_mbps,"
+            "decode_attempts,decode_attempt_mean_us,decode_successes,decode_success_mean_us,"
+            "completed_blocks,decode_failures,average_block_latency_ms,"
+            "data_symbols,repair_symbols,repair_symbols_consumed\n");
+    fprintf(fp,
+            "%s,receiver,RaptorQ,%.9f,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
+            ",%.9f,%.9f,%.9f,%.9f,%.9f,%" PRIu64 ",%.9f,%" PRIu64 ",%.9f,%" PRIu64 ",%" PRIu64 ",%.9f,%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+            g_cfg.run_id, duration_s, gs_stats.pkts_received, gs_stats.pkts_forwarded,
+            gs_stats.pkts_original, gs_stats.bytes_forwarded, gs_stats.bytes_original,
+            thr_fwd_pps, thr_orig_pps, thr_fwd_mbps, thr_orig_mbps, goodput_mbps,
+            gs_stats.dec_attempts,
+            gs_stats.dec_attempts ? (gs_stats.dec_attempt_time_ns / (double)gs_stats.dec_attempts) / 1000.0 : 0.0,
+            gs_stats.dec_calls,
+            gs_stats.dec_calls ? (gs_stats.dec_time_ns / (double)gs_stats.dec_calls) / 1000.0 : 0.0,
+            gs_stats.completed_generations, g_gens_decode_fail, avg_block_latency_ms,
+            g_total_data_fragments, g_total_parity_fragments, g_total_parity_consumed);
+    if (flush_sync_close(&fp, "[GS-RQ] summary-output") != 0) return -1;
+    return 0;
+}
 
 static void sigint_handler(int s)
 {
@@ -663,6 +803,7 @@ int main(int argc, char *argv[])
         print_usage(stderr, argv[0]);
         return 2;
     }
+    if (open_block_metrics() != 0) return EXIT_FAILURE;
 
     memset(blocks, 0, sizeof(blocks));
     memset(g_completed_blocks, 0, sizeof(g_completed_blocks));
@@ -677,7 +818,12 @@ int main(int argc, char *argv[])
 
     struct sigaction sa = {0};
     sa.sa_handler = sigint_handler;
-    sigaction(SIGINT, &sa, NULL);
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    if (sigaction(SIGINT, &sa, NULL) < 0 || sigaction(SIGTERM, &sa, NULL) < 0) {
+        perror("[GS-RQ] sigaction");
+        return EXIT_FAILURE;
+    }
 
     uint8_t buf[2048];
     int maxfd = (udp_a > udp_b ? udp_a : udp_b);
@@ -691,17 +837,23 @@ int main(int argc, char *argv[])
         FD_SET(udp_b, &rfds);
 
         if (select(maxfd + 1, &rfds, NULL, NULL, NULL) < 0) {
-            if (errno == EINTR) continue;
-            die("select");
+            if (errno == EINTR) {
+                if (g_stop) break;
+                continue;
+            }
+            perror("[GS-RQ] select");
+            break;
         }
 
         if (FD_ISSET(udp_a, &rfds)) {
             ssize_t n = recvfrom(udp_a, buf, sizeof(buf), 0, NULL, NULL);
             if (n > 0) handle_rq_symbol(buf, (int)n);
+            else if (n < 0 && errno != EINTR) perror("[GS-RQ] recvfrom(A)");
         }
         if (FD_ISSET(udp_b, &rfds)) {
             ssize_t n = recvfrom(udp_b, buf, sizeof(buf), 0, NULL, NULL);
             if (n > 0) handle_rq_symbol(buf, (int)n);
+            else if (n < 0 && errno != EINTR) perror("[GS-RQ] recvfrom(B)");
         }
     }
 
@@ -716,7 +868,10 @@ int main(int argc, char *argv[])
 
     print_global_stats();
 
-    double duration_s = (double)(gs_stats.experiment_end_ns - gs_stats.experiment_start_ns) / 1e9;
+    double duration_s = (gs_stats.experiment_start_ns != 0 &&
+                         gs_stats.experiment_end_ns >= gs_stats.experiment_start_ns)
+                      ? (double)(gs_stats.experiment_end_ns - gs_stats.experiment_start_ns) / 1e9
+                      : 0.0;
     double thr_fwd_pps  = duration_s > 0 ? (double)gs_stats.pkts_forwarded / duration_s : 0.0;
     double thr_orig_pps = duration_s > 0 ? (double)gs_stats.pkts_original  / duration_s : 0.0;
     double thr_fwd_mbps  = duration_s > 0 ? (gs_stats.bytes_forwarded * 8.0) / (duration_s * 1e6) : 0.0;
@@ -766,6 +921,12 @@ int main(int argc, char *argv[])
             goodput_mbps,
             gs_stats.completed_generations
             );
+
+    if (write_summary_csv(duration_s, thr_fwd_pps, thr_orig_pps,
+                          thr_fwd_mbps, thr_orig_mbps, goodput_mbps, avg_gen_latency_ms) != 0)
+        fprintf(stderr, "[GS-RQ] WARNING: structured summary was not written\n");
+    if (flush_sync_close(&g_block_metrics_fp, "[GS-RQ] block-metrics-output") != 0)
+        fprintf(stderr, "[GS-RQ] WARNING: block metrics were not cleanly flushed\n");
 
     close(udp_a);
     close(udp_b);
