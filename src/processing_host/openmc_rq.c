@@ -995,22 +995,14 @@ static void send_rq_symbol(const struct rq_data_hdr *hdr,
 
     int use_sock;
     struct sockaddr_in *dest;
-    const char *iface_name;
-    const char *ip_str;
 
     if (iface == GW_IFACE_B) {
-        use_sock   = sock_b;
-        dest       = &gs_addr_b;
-        iface_name = g_cfg.iface_b;
-        ip_str     = g_cfg.peer_b;
+        use_sock = sock_b;
+        dest = &gs_addr_b;
     } else {
-        use_sock   = sock_a;
-        dest       = &gs_addr_a;
-        iface_name = g_cfg.iface_a;
-        ip_str     = g_cfg.peer_a;
+        use_sock = sock_a;
+        dest = &gs_addr_a;
     }
-
-    //uint32_t esi_host = ntohl(hdr->esi);
 
     ssize_t sent = sendto(use_sock, buf, sizeof(*hdr) + symbol_len, 0,
                           (struct sockaddr *)dest, sizeof(*dest));
@@ -1024,14 +1016,6 @@ static void send_rq_symbol(const struct rq_data_hdr *hdr,
             stats.pkts_original++;
             stats.bytes_original += symbol_len;
         }
-
-        /*fprintf(stderr,
-                "[GW] block=%u esi=%u src=%u len=%u -> %s (%s)\n",
-                ntohs(hdr->block_id),
-                esi_host,
-                hdr->is_source,
-                symbol_len,
-                iface_name, ip_str);*/
     }
 }
 
