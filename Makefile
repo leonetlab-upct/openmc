@@ -1,4 +1,4 @@
-# OpenMC v0.1.0
+# OpenMC v0.1.1
 # Unified build system introduced in Phase 2.3.
 #
 # Local build:
@@ -43,6 +43,7 @@ CONTAINER_CONFIG_DIR  ?= /config
 APPLICATION_PORT      ?= 12345
 NFQUEUE_NUM           ?= 1
 WMEM_MAX              ?= 4194304
+RMEM_MAX              ?= 4194304
 
 
 PROCESSING_DIR  := src/processing_host
@@ -102,7 +103,14 @@ $(BIN_DIR)/edge-receiver-rq: $(RECEIVER_DIR)/edge_receiver_rq.c | $(BIN_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< -o $@ $(LDFLAGS) $(RQ_LDLIBS)
 
 check-python:
-	$(PYTHON) -m py_compile $(MONITORING_DIR)/path_monitor.py
+	$(PYTHON) -m py_compile $(MONITORING_DIR)/path_monitor.py \
+		scripts/collect_resources.py scripts/set_bleo_delay.py \
+		scripts/run_experiment.py scripts/run_matrix.py \
+		reproducibility/analysis/common.py reproducibility/analysis/validate_runs.py \
+		reproducibility/analysis/aggregate_results.py reproducibility/analysis/generate_figures.py \
+		reproducibility/analysis/freeze_fig2.py \
+		reproducibility/analysis/freeze_fig3.py \
+		reproducibility/validation/validate_instrumentation.py
 
 check-dependencies:
 	@command -v $(CC) >/dev/null || { echo "Missing compiler: $(CC)"; exit 1; }
@@ -151,6 +159,10 @@ bleo-build: applications
 		"$$PROCESSING_CONTAINER:$$PROCESSING_BIN_DIR/openmc_rq.c"; \
 	docker cp $(MONITORING_DIR)/path_monitor.py \
 		"$$PROCESSING_CONTAINER:$$PROCESSING_BIN_DIR/path_monitor.py"; \
+	docker cp scripts/collect_resources.py \
+		"$$PROCESSING_CONTAINER:$$PROCESSING_BIN_DIR/collect_resources.py"; \
+	docker cp scripts/collect_resources.py \
+		"$$RECEIVER_CONTAINER:$$RECEIVER_BIN_DIR/collect_resources.py"; \
 	docker cp $(RECEIVER_DIR)/edge_receiver_rs.c \
 		"$$RECEIVER_CONTAINER:$$RECEIVER_BIN_DIR/edge_receiver_rs.c"; \
 	docker cp $(RECEIVER_DIR)/edge_receiver_rq.c \
@@ -197,12 +209,14 @@ bleo-install: bleo-build
 	APPLICATION_PORT="$${APPLICATION_PORT:-$(APPLICATION_PORT)}"; \
 	NFQUEUE_NUM="$${NFQUEUE_NUM:-$(NFQUEUE_NUM)}"; \
 	WMEM_MAX="$${WMEM_MAX:-$(WMEM_MAX)}"; \
+	RMEM_MAX="$${RMEM_MAX:-$(RMEM_MAX)}"; \
 	docker exec "$$PROCESSING_CONTAINER" sh -c \
 		"iptables -C FORWARD -p udp --dport $$APPLICATION_PORT \
 		 -j NFQUEUE --queue-num $$NFQUEUE_NUM 2>/dev/null || \
 		 iptables -I FORWARD -p udp --dport $$APPLICATION_PORT \
 		 -j NFQUEUE --queue-num $$NFQUEUE_NUM"; \
 	sysctl -w "net.core.wmem_max=$$WMEM_MAX"; \
+	sysctl -w "net.core.rmem_max=$$RMEM_MAX"; \
 	echo "OpenMC deployment profile installed successfully."
 
 
