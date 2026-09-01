@@ -40,7 +40,7 @@
 #include <time.h>
 
 /* Runtime configuration with bLEO-compatible defaults. */
-#define OPENMC_VERSION      "0.1.1"
+#define       "0.1.1"
 #define DEFAULT_OUT_IFACE   "term2term4"
 #define DEFAULT_IN_IFACE_A  "term2gs3"
 #define DEFAULT_IN_IFACE_B  "term2gs4"
@@ -190,7 +190,7 @@ static int parse_runtime_options(int argc, char **argv)
             usage(stdout, argv[0]);
             exit(EXIT_SUCCESS);
         case 'V':
-            printf("OpenMC Reed--Solomon Edge Receiver %s\\n", OPENMC_VERSION);
+            printf("OpenMC Reed--Solomon Edge Receiver %s\n", OPENMC_VERSION);
             exit(EXIT_SUCCESS);
         default:
             return -1;
