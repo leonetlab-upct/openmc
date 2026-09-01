@@ -1,6 +1,6 @@
 # OpenMC Experimental Protocol — SoftwareX Revision
 
-Status: **PRE-CAMPAIGN**
+Status: **FROZEN**
 
 This document freezes the methodology for the additional performance campaign requested during SoftwareX review. Parameters, metric definitions, validity criteria, replicate count, and statistical procedures must not be changed after inspection of definitive results unless a documented experimental error requires a new campaign.
 
@@ -222,7 +222,7 @@ After Experiment-5 validation, freeze the exact OpenMC commit. Any later softwar
 
 ## 12. Data publication
 
-Raw and processed data will be deposited in Zenodo. Every point and confidence interval in revised Figures 2 and 3 must be reproducible from archived run-level and block-level data.
+Raw and processed data are archived in Zenodo. Every point and confidence interval in revised Figures 2 and 3 must be reproducible from archived run-level and block-level data.
 
 
 ## Experiment-3 implementation note
