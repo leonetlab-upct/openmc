@@ -48,4 +48,4 @@ reproducibility/processed/experiment5-instrumentation-validation.csv
 
 A successful validation prints `PASS RQ` and `PASS RS` and exits with status 0.
 
-After this check passes, the experimental software can be frozen. The definitive Figure 2/3 and rate-sweep campaigns must use the default `--instrumentation-mode full`.
+After this check passes, the experimental software can be frozen. The definitive Figure 2 and Figure 3 campaigns use the default `--instrumentation-mode full`. The published maximum-sustainable-rate sweep uses `--instrumentation-mode functional` so that packet-processing capacity is characterized without the additional overhead of the full performance instrumentation.
