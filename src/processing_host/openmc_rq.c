@@ -420,7 +420,7 @@ static int parse_arguments(int argc, char **argv)
             print_usage(stdout, argv[0]);
             exit(EXIT_SUCCESS);
         case 'V':
-            printf("OpenMC RaptorQ processing host %s\\n", OPENMC_VERSION);
+            printf("OpenMC RaptorQ processing host %s\n", OPENMC_VERSION);
             exit(EXIT_SUCCESS);
         default:
             return -1;
