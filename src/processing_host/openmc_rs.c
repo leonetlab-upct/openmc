@@ -239,7 +239,7 @@ static int parse_runtime_options(int argc, char **argv)
             usage(stdout, argv[0]);
             exit(EXIT_SUCCESS);
         case 'V':
-            printf("OpenMC Reed--Solomon processing host %s\\n",
+            printf("OpenMC Reed--Solomon processing host %s\n",
                    OPENMC_VERSION);
             exit(EXIT_SUCCESS);
         default:
