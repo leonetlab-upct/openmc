@@ -13,9 +13,9 @@ The SoftwareX revision added structured metric export, per-block raw latency rec
 --instrumentation-mode functional
 ```
 
-`full` is the default and is the only mode used for definitive measurements. It preserves the Experiment-4 behaviour and writes `gateway.csv`, `receiver.csv`, `blocks.csv` and `resources.csv`.
+`full` is the default and is used for the definitive Figure 2 and Figure 3 measurements. It preserves the Experiment-4 behaviour and writes `gateway.csv`, `receiver.csv`, `blocks.csv` and `resources.csv`.
 
-`functional` is used only for Experiment-5. It invokes the same OpenMC binaries without the Experiment-1 structured-output arguments and does not start the Experiment-2 CPU/RSS collectors. The normal gateway, receiver, client and destination logs remain available. Functional validity is reconstructed from those legacy outputs.
+`functional` is used for the uninstrumented side of Experiment-5 and for the published maximum-sustainable-rate sweep. It invokes the same OpenMC binaries without the Experiment-1 structured-output arguments and does not start the Experiment-2 CPU/RSS collectors. This allows the rate sweep to characterize packet-processing capacity without the additional overhead of the full performance instrumentation. The normal gateway, receiver, client and destination logs remain available, and functional validity is reconstructed from those legacy outputs.
 
 ## Non-interference criterion
 
