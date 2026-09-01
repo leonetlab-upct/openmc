@@ -191,6 +191,8 @@ A candidate offered rate is sustainable only if **all ten definitive repetitions
 
 Use a coarse sweep to bracket saturation, a fine sweep around the boundary, and ten definitive repetitions at final candidate rates. The reported maximum sustainable rate is the highest tested rate satisfying all criteria in all ten repetitions.
 
+The published maximum-sustainable-rate sweep uses `instrumentation_mode=functional`. Unlike the definitive Figure 2 and Figure 3 campaigns, which use the full performance instrumentation, the rate sweep deliberately disables structured gateway/receiver/block export and CPU/RSS sampling so that the sustainable packet-processing rate is characterized without the additional measurement overhead. Functional outcomes remain available from the normal process logs and run manifest.
+
 Rate-sweep execution deliberately preserves complete observations above the
 saturation boundary. A run can therefore have a valid manifest and complete
 structured output while being classified as non-sustainable during rate
