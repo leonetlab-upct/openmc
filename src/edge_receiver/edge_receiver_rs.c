@@ -40,7 +40,7 @@
 #include <time.h>
 
 /* Runtime configuration with bLEO-compatible defaults. */
-#define       "0.1.1"
+#define OPENMC_VERSION      "0.1.1"
 #define DEFAULT_OUT_IFACE   "term2term4"
 #define DEFAULT_IN_IFACE_A  "term2gs3"
 #define DEFAULT_IN_IFACE_B  "term2gs4"
