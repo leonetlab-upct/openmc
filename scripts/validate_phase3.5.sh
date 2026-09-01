@@ -114,10 +114,13 @@ kill_in_container() {
 }
 
 cleanup() {
+    local saved_errexit=0
+    local pid
+
+    [[ $- == *e* ]] && saved_errexit=1
     set +e
 
-    # Ask the applications to terminate cleanly first so that final
-    # statistics are flushed to the validation logs.
+    # Ask container processes to terminate cleanly.
     terminate_in_container \
         "${DESTINATION_CONTAINER}" 'destination-server'
     terminate_in_container \
@@ -129,11 +132,27 @@ cleanup() {
 
     sleep 1
 
+    # Never wait indefinitely for host-side docker exec wrappers.
     for pid in "${PIDS[@]:-}"; do
-        wait "${pid}" 2>/dev/null || true
+        [[ -n "${pid}" ]] || continue
+
+        if kill -0 "${pid}" 2>/dev/null; then
+            if ! wait_for_process "${pid}" 3; then
+                kill -TERM "${pid}" 2>/dev/null || true
+                sleep 1
+
+                if kill -0 "${pid}" 2>/dev/null; then
+                    kill -KILL "${pid}" 2>/dev/null || true
+                fi
+
+                wait "${pid}" 2>/dev/null || true
+            fi
+        else
+            wait "${pid}" 2>/dev/null || true
+        fi
     done
 
-    # Remove anything left over from an interrupted validation run.
+    # Force-remove any container-side leftovers.
     kill_in_container \
         "${DESTINATION_CONTAINER}" 'destination-server'
     kill_in_container \
@@ -143,10 +162,11 @@ cleanup() {
     kill_in_container \
         "${PROCESSING_CONTAINER}" 'path_monitor.py'
 
-    for pid in "${PIDS[@]:-}"; do
-        kill -KILL "${pid}" 2>/dev/null || true
-        wait "${pid}" 2>/dev/null || true
-    done
+    PIDS=()
+
+    if (( saved_errexit )); then
+        set -e
+    fi
 }
 
 trap cleanup EXIT INT TERM
