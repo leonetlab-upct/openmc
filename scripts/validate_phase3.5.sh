@@ -38,7 +38,7 @@ BLOCK_SIZE="${BLOCK_SIZE:-8}"
 EXPECTED_PACKETS="${EXPECTED_PACKETS:-2000}"
 EXPECTED_BLOCKS="${EXPECTED_BLOCKS:-$((EXPECTED_PACKETS / BLOCK_SIZE))}"
 STARTUP_DELAY="${STARTUP_DELAY:-2}"
-DRAIN_TIMEOUT="${DRAIN_TIMEOUT:-60}"
+DRAIN_TIMEOUT="${DRAIN_TIMEOUT:-15}"
 DRAIN_GRACE="${DRAIN_GRACE:-2}"
 
 PIDS=()
@@ -502,6 +502,7 @@ run_rq_variant() {
 
     run_bg "${run_dir}/server.log" \
         docker exec "${DESTINATION_CONTAINER}" \
+        stdbuf -oL -eL \
         "${DESTINATION_BIN_DIR%/}/destination-server" \
         -a 0.0.0.0 \
         -p "${APPLICATION_PORT}" \
@@ -653,6 +654,7 @@ run_rs_variant() {
 
     run_bg "${run_dir}/server.log" \
         docker exec "${DESTINATION_CONTAINER}" \
+        stdbuf -oL -eL \
         "${DESTINATION_BIN_DIR%/}/destination-server" \
         -a 0.0.0.0 \
         -p "${APPLICATION_PORT}" \
