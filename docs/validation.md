@@ -206,9 +206,10 @@ reproducibility/experimental_protocol.md
 ```
 
 Frozen raw and processed experimental data associated with the SoftwareX
-evaluation are archived separately in the accompanying Zenodo dataset. The
-GitHub repository contains the maintained software, experiment
-orchestration, validation, and analysis tools.
+evaluation are archived separately in the accompanying dataset in the UPCT
+Digital Repository (https://doi.org/10.82432/10317/25392). The GitHub
+repository contains the maintained software, experiment orchestration,
+validation, and analysis tools.
 
 ## Release validation
 
