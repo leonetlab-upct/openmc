@@ -224,7 +224,7 @@ After Experiment-5 validation, freeze the exact OpenMC commit. Any later softwar
 
 ## 12. Data publication
 
-Raw and processed data are archived in Zenodo. Every point and confidence interval in revised Figures 2 and 3 must be reproducible from archived run-level and block-level data.
+Raw and processed data are archived in the UPCT Digital Repository (https://doi.org/10.82432/10317/25392). Every point and confidence interval in revised Figures 2 and 3 must be reproducible from archived run-level and block-level data.
 
 
 ## Experiment-3 implementation note
