@@ -90,4 +90,5 @@ OpenMC v0.1.1 is validated using complementary checks:
    under `reproducibility/`.
 
 The complete experimental data and publication-level reproducibility
-results are archived separately in the accompanying Zenodo dataset.
+results are archived separately in the accompanying dataset in the UPCT
+Digital Repository (https://doi.org/10.82432/10317/25392).
