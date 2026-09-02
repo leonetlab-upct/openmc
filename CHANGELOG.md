@@ -37,8 +37,8 @@
 
 - OpenMC v0.1.1 is the reproducibility and experimental-instrumentation
   release associated with the revised SoftwareX submission.
-- The frozen experimental dataset is available at
-  https://doi.org/10.5281/zenodo.22142700.
+- The frozen experimental dataset is available in the UPCT Digital Repository at
+  https://doi.org/10.82432/10317/25392.
 - Sustainable offered-rate results characterize the complete evaluated
   experimental datapath and are not intrinsic FEC codec throughput limits.
 
