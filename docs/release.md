@@ -36,8 +36,8 @@ find . -type f | grep -E \
 The command should produce no output.
 
 Raw and processed experimental data associated with the SoftwareX
-evaluation are archived separately in Zenodo and should not be duplicated
-in the source-code repository.
+evaluation are archived separately in the UPCT Digital Repository and should
+not be duplicated in the source-code repository.
 
 ## 3. Validate the source tree
 
@@ -161,14 +161,14 @@ release notes, and source-code archives.
 
 For the OpenMC v0.1.1 release associated with the revised SoftwareX
 submission, the frozen raw and processed experimental data are archived
-separately on Zenodo:
+separately in the UPCT Digital Repository:
 
-https://doi.org/10.5281/zenodo.22142700
+https://doi.org/10.82432/10317/25392
 
 The GitHub repository contains the OpenMC source code, experimental
 orchestration, configurations, analysis scripts, validation tools, and
-documentation. Zenodo provides the frozen experimental data and
-publication-level results.
+documentation. The UPCT Digital Repository provides the frozen experimental
+data and publication-level results.
 
 This separation keeps the software repository focused on maintained source
 code while providing a persistent and independently archived record of the
