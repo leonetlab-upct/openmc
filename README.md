@@ -267,7 +267,7 @@ See [tests/README.md](tests/README.md) for details.
 - [Release procedure](docs/release.md)
 - [Historical reproducible baseline](reproducibility/baseline/README.md)
 
-The frozen raw and processed experimental data supporting the SoftwareX evaluation are archived on Zenodo: https://doi.org/10.5281/zenodo.22142700
+The frozen raw and processed experimental data supporting the SoftwareX evaluation are archived in the UPCT Digital Repository: https://doi.org/10.82432/10317/25392
 
 ## Citation
 
